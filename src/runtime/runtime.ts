@@ -195,19 +195,21 @@ export class GraphRuntime {
       toolRegistry.exitNode()
       options.onNodeExit?.(this.currentNodeId, result)
 
-      // Check if terminal
-      if (graph.terminalNodes.includes(this.currentNodeId)) {
-        return {
-          finalNodeId: this.currentNodeId,
-          sideChannel,
-          chain,
-          steps: this.steps,
-        }
-      }
-
       // Resolve transition
       const nextNodeId = this.resolveTransition(graph, node, result, sideChannel)
+
+      // Terminal check: terminate if this node is terminal AND no transition matched.
+      // This allows a node to be both terminal and loopable — it exits when
+      // there's nowhere left to go, but keeps running if a transition fires.
       if (!nextNodeId) {
+        if (graph.terminalNodes.includes(this.currentNodeId)) {
+          return {
+            finalNodeId: this.currentNodeId,
+            sideChannel,
+            chain,
+            steps: this.steps,
+          }
+        }
         throw new GraphControlError(
           `No matching transition from node "${this.currentNodeId}"`,
           this.currentNodeId,
