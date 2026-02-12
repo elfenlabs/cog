@@ -1,0 +1,30 @@
+{
+  "name": "cog",
+  "version": "0.1.0",
+  "description": "An unopinionated agent framework for TypeScript — context chain + control flow graph",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-strip-types --test src/**/*.test.ts"
+  },
+  "keywords": [
+    "agent",
+    "sdk",
+    "llm",
+    "context",
+    "state-machine"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
