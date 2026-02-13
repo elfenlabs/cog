@@ -18,7 +18,9 @@ export type AgentConfig = {
   tools: Tool<any>[]
   maxSteps?: number
   signal?: AbortSignal
+  onThinkingStart?: () => void
   onThinking?: (chunk: string) => void
+  onThinkingEnd?: () => void
   onOutput?: (chunk: string) => void
   onBeforeToolCall?: (
     tool: Tool<any>,
@@ -62,7 +64,9 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     tools,
     maxSteps = 50,
     signal,
+    onThinkingStart,
     onThinking,
+    onThinkingEnd,
     onOutput,
     onBeforeToolCall,
     onAfterToolCall,
@@ -72,6 +76,15 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
   const toolSpecs = tools.map(t => t.spec)
 
   let steps = 0
+  let isThinking = false
+
+  /** End reasoning block if one is active */
+  const endThinking = () => {
+    if (isThinking) {
+      isThinking = false
+      onThinkingEnd?.()
+    }
+  }
 
   while (true) {
     // Check abort
@@ -91,10 +104,21 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     ]
 
     // Build stream callbacks for the provider
+    // Wrap onThinking to manage start/end lifecycle
+    const wrappedOnThinking = onThinking
+      ? (chunk: string) => {
+          if (!isThinking) {
+            isThinking = true
+            onThinkingStart?.()
+          }
+          onThinking(chunk)
+        }
+      : undefined
+
     const stream: StreamCallbacks | undefined =
-      onThinking || onOutput
+      wrappedOnThinking || onOutput
         ? {
-            onReasoning: onThinking,
+            onReasoning: wrappedOnThinking,
             onContent: onOutput,
           }
         : undefined
@@ -111,6 +135,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
 
     // Case 1: Model returned tool calls → execute and loop
     if (result.toolCalls && result.toolCalls.length > 0) {
+      endThinking()
       // Append the assistant message with tool calls to context
       ctx.push({
         role: 'assistant',
@@ -178,6 +203,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
 
     // Case 2: Model returned text only → done
     if (result.content) {
+      endThinking()
       ctx.push({
         role: 'assistant',
         content: result.content,
