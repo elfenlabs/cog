@@ -38,11 +38,19 @@ export type ToolSpec = {
 
 // ── Provider ────────────────────────────────────────────────────────────────
 
+/** Token usage statistics from a provider call */
+export type Usage = {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
 /** Result from a provider generate call */
 export type GenerateResult = {
   content?: string
   reasoning?: string
   toolCalls?: ToolCallRequest[]
+  usage?: Usage
 }
 
 /** Streaming callbacks passed to the provider */

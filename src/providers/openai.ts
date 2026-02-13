@@ -5,7 +5,7 @@
  * Supports streaming (SSE) with reasoning_content extraction.
  */
 
-import type { Provider, ToolCallRequest, StreamCallbacks, Message, ToolSpec } from '../types.js'
+import type { Provider, ToolCallRequest, StreamCallbacks, Message, ToolSpec, Usage } from '../types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -75,6 +75,7 @@ async function readSSEStream(
 ) {
   let content = ''
   let reasoning = ''
+  let usage: Usage | undefined
   const toolCallsMap = new Map<number, { id: string; name: string; args: string }>()
 
   const reader = response.body!.getReader()
@@ -94,6 +95,16 @@ async function readSSEStream(
       if (payload === '[DONE]') continue
 
       const chunk = JSON.parse(payload)
+
+      // Usage arrives in the final chunk (when stream_options.include_usage is set)
+      if (chunk.usage) {
+        usage = {
+          promptTokens: chunk.usage.prompt_tokens ?? 0,
+          completionTokens: chunk.usage.completion_tokens ?? 0,
+          totalTokens: chunk.usage.total_tokens ?? 0,
+        }
+      }
+
       const delta = chunk.choices?.[0]?.delta
       if (!delta) continue
 
@@ -133,6 +144,7 @@ async function readSSEStream(
     content: content || undefined,
     reasoning: reasoning || undefined,
     toolCalls,
+    usage,
   }
 }
 
@@ -169,6 +181,7 @@ export function createOpenAIProvider(
         messages: toAPIMessages(params.messages),
         temperature,
         stream: shouldStream,
+        ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
       }
 
       const tools = params.tools && params.tools.length > 0 ? toAPITools(params.tools) : undefined
@@ -196,10 +209,18 @@ export function createOpenAIProvider(
       if (!shouldStream) {
         const data = (await response.json()) as any
         const message = data.choices[0].message
+        const usage: Usage | undefined = data.usage
+          ? {
+              promptTokens: data.usage.prompt_tokens ?? 0,
+              completionTokens: data.usage.completion_tokens ?? 0,
+              totalTokens: data.usage.total_tokens ?? 0,
+            }
+          : undefined
         return {
           content: message.content ?? undefined,
           reasoning: message.reasoning_content ?? undefined,
           toolCalls: parseToolCalls(message.tool_calls),
+          usage,
         }
       }
 

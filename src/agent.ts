@@ -7,7 +7,7 @@
 
 import type { Context } from './context.js'
 import type { Tool } from './tool.js'
-import type { Message, Provider, StreamCallbacks } from './types.js'
+import type { Message, Provider, StreamCallbacks, Usage } from './types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ export type AgentConfig = {
   onBeforeToolCall?: (
     tool: Tool<any>,
     args: Record<string, unknown>,
-  ) => boolean | void
+  ) => Promise<boolean | void> | boolean | void
   onAfterToolCall?: (
     tool: Tool<any>,
     args: Record<string, unknown>,
@@ -38,6 +38,7 @@ export type AgentConfig = {
 export type AgentResult = {
   response: string
   steps: number
+  usage: Usage
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
   let steps = 0
   let isThinking = false
   let isOutputting = false
+  const totalUsage: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
 
   /** End reasoning block if one is active */
   const endThinking = () => {
@@ -156,6 +158,13 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
 
     steps++
 
+    // Accumulate token usage
+    if (result.usage) {
+      totalUsage.promptTokens += result.usage.promptTokens
+      totalUsage.completionTokens += result.usage.completionTokens
+      totalUsage.totalTokens += result.usage.totalTokens
+    }
+
     // Case 1: Model returned tool calls → execute and loop
     if (result.toolCalls && result.toolCalls.length > 0) {
       endThinking()
@@ -181,7 +190,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
 
         // Hook: before
         if (onBeforeToolCall) {
-          const allowed = onBeforeToolCall(tool, call.arguments)
+          const allowed = await onBeforeToolCall(tool, call.arguments)
           if (allowed === false) {
             ctx.push({
               role: 'tool',
@@ -233,7 +242,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
         content: result.content,
         reasoning: result.reasoning,
       })
-      return { response: result.content, steps }
+      return { response: result.content, steps, usage: totalUsage }
     }
 
     // Case 3: Reasoning only (no content, no tool calls) — continue loop

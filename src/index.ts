@@ -24,5 +24,6 @@ export type {
   GenerateResult,
   StreamCallbacks,
   Provider,
+  Usage,
 } from './types.js'
 
