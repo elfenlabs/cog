@@ -21,7 +21,9 @@ export type AgentConfig = {
   onThinkingStart?: () => void
   onThinking?: (chunk: string) => void
   onThinkingEnd?: () => void
+  onOutputStart?: () => void
   onOutput?: (chunk: string) => void
+  onOutputEnd?: () => void
   onBeforeToolCall?: (
     tool: Tool<any>,
     args: Record<string, unknown>,
@@ -67,7 +69,9 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     onThinkingStart,
     onThinking,
     onThinkingEnd,
+    onOutputStart,
     onOutput,
+    onOutputEnd,
     onBeforeToolCall,
     onAfterToolCall,
   } = config
@@ -77,12 +81,21 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
 
   let steps = 0
   let isThinking = false
+  let isOutputting = false
 
   /** End reasoning block if one is active */
   const endThinking = () => {
     if (isThinking) {
       isThinking = false
       onThinkingEnd?.()
+    }
+  }
+
+  /** End output block if one is active */
+  const endOutput = () => {
+    if (isOutputting) {
+      isOutputting = false
+      onOutputEnd?.()
     }
   }
 
@@ -115,11 +128,21 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
         }
       : undefined
 
+    const wrappedOnOutput = onOutput
+      ? (chunk: string) => {
+          if (!isOutputting) {
+            isOutputting = true
+            onOutputStart?.()
+          }
+          onOutput(chunk)
+        }
+      : undefined
+
     const stream: StreamCallbacks | undefined =
-      wrappedOnThinking || onOutput
+      wrappedOnThinking || wrappedOnOutput
         ? {
             onReasoning: wrappedOnThinking,
-            onContent: onOutput,
+            onContent: wrappedOnOutput,
           }
         : undefined
 
@@ -204,6 +227,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     // Case 2: Model returned text only → done
     if (result.content) {
       endThinking()
+      endOutput()
       ctx.push({
         role: 'assistant',
         content: result.content,

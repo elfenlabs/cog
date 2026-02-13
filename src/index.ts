@@ -13,6 +13,9 @@ export type { ToolConfig } from './tool.js'
 export { runAgent, MaxStepsError, AgentAbortError } from './agent.js'
 export type { AgentConfig, AgentResult } from './agent.js'
 
+export { createOpenAIProvider } from './providers/openai.js'
+export type { OpenAIProviderOptions } from './providers/openai.js'
+
 export type {
   Message,
   ToolCallRequest,
@@ -22,3 +25,4 @@ export type {
   StreamCallbacks,
   Provider,
 } from './types.js'
+
