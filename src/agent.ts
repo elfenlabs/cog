@@ -186,7 +186,18 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
       return { response: result.content, steps }
     }
 
-    // Case 3: Neither text nor tool calls → error
+    // Case 3: Reasoning only (no content, no tool calls) — continue loop
+    // Reasoning models sometimes produce a think step before acting.
+    if (result.reasoning) {
+      ctx.push({
+        role: 'assistant',
+        content: '',
+        reasoning: result.reasoning,
+      })
+      continue
+    }
+
+    // Case 4: Nothing at all — error
     throw new Error('Provider returned neither content nor tool calls')
   }
 }
