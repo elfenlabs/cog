@@ -15,6 +15,7 @@ export type ToolCallRequest = {
 export type Message = {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  reasoning?: string
   toolCallId?: string
   toolCalls?: ToolCallRequest[]
 }
@@ -40,7 +41,14 @@ export type ToolSpec = {
 /** Result from a provider generate call */
 export type GenerateResult = {
   content?: string
+  reasoning?: string
   toolCalls?: ToolCallRequest[]
+}
+
+/** Streaming callbacks passed to the provider */
+export type StreamCallbacks = {
+  onReasoning?: (chunk: string) => void
+  onContent?: (chunk: string) => void
 }
 
 /** LLM provider interface — user-supplied */
@@ -49,5 +57,6 @@ export interface Provider {
     messages: Message[]
     tools?: ToolSpec[]
     signal?: AbortSignal
+    stream?: StreamCallbacks
   }): Promise<GenerateResult>
 }

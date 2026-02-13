@@ -19,5 +19,6 @@ export type {
   ToolParameter,
   ToolSpec,
   GenerateResult,
+  StreamCallbacks,
   Provider,
 } from './types.js'

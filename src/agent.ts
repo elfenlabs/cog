@@ -7,7 +7,7 @@
 
 import type { Context } from './context.js'
 import type { Tool } from './tool.js'
-import type { Message, Provider } from './types.js'
+import type { Message, Provider, StreamCallbacks } from './types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,8 @@ export type AgentConfig = {
   tools: Tool<any>[]
   maxSteps?: number
   signal?: AbortSignal
+  onThinking?: (chunk: string) => void
+  onOutput?: (chunk: string) => void
   onBeforeToolCall?: (
     tool: Tool<any>,
     args: Record<string, unknown>,
@@ -60,6 +62,8 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     tools,
     maxSteps = 50,
     signal,
+    onThinking,
+    onOutput,
     onBeforeToolCall,
     onAfterToolCall,
   } = config
@@ -86,11 +90,21 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
       ...ctx.messages,
     ]
 
+    // Build stream callbacks for the provider
+    const stream: StreamCallbacks | undefined =
+      onThinking || onOutput
+        ? {
+            onReasoning: onThinking,
+            onContent: onOutput,
+          }
+        : undefined
+
     // Call the provider
     const result = await provider.generate({
       messages,
       tools: toolSpecs.length > 0 ? toolSpecs : undefined,
       signal,
+      stream,
     })
 
     steps++
@@ -101,6 +115,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
       ctx.push({
         role: 'assistant',
         content: result.content ?? '',
+        reasoning: result.reasoning,
         toolCalls: result.toolCalls,
       })
 
@@ -166,6 +181,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
       ctx.push({
         role: 'assistant',
         content: result.content,
+        reasoning: result.reasoning,
       })
       return { response: result.content, steps }
     }
