@@ -1,47 +1,23 @@
 /**
- * Cog — Agent SDK
+ * Cog v2 — A minimal agent SDK for TypeScript
  *
- * An unopinionated agent framework for TypeScript.
- * Context chain + control flow graph.
+ * Three primitives, infinite composition.
  */
 
-// Context Layer
-export { ContextChain, PinCycleError, resetHandleCounter } from './context/index.js'
-export type {
-  ContextFormatter,
-  ContextNode,
-  ContextNodeHandle,
-  PinRule,
-  SerializedChain,
-  SerializedNode,
-} from './context/index.js'
+export { createContext, Context } from './context.js'
+export type { ContextOptions, SerializedContext } from './context.js'
 
-// Graph Layer
-export { defineGraph, resolveEdges, ToolRegistry, visualize } from './graph/index.js'
-export type {
-  ActionNodeConfig,
-  AnyNodeConfig,
-  GraphDefinition,
-  LLMCallNodeConfig,
-  NodeExecutionContext,
-  ResolvedEdge,
-  RouterNodeConfig,
-  ScratchNodeConfig,
-  SubgraphNodeConfig,
-  ToolCallNodeConfig,
-  TransitionDefinition,
-  VisualizationFormat,
-} from './graph/index.js'
+export { createTool, Tool } from './tool.js'
+export type { ToolConfig } from './tool.js'
 
-// Runtime Layer
-export { GraphRuntime, SideChannel, key, GraphControlError, SerializationError } from './runtime/index.js'
-export type {
-  RuntimeOptions,
-  RunResult,
-  SerializedRunState,
-  SideChannelKey,
-  SerializedSideChannel,
-} from './runtime/index.js'
+export { runAgent, MaxStepsError, AgentAbortError } from './agent.js'
+export type { AgentConfig, AgentResult } from './agent.js'
 
-// Types
-export type { LLMProvider, LLMRequest, LLMResult, ToolCall, ToolDefinition, ParameterDef } from './types/index.js'
+export type {
+  Message,
+  ToolCallRequest,
+  ToolParameter,
+  ToolSpec,
+  GenerateResult,
+  Provider,
+} from './types.js'

@@ -1,7 +1,7 @@
 {
   "name": "cog",
   "version": "0.1.0",
-  "description": "An unopinionated agent framework for TypeScript — context chain + control flow graph",
+  "description": "A minimal agent SDK for TypeScript — three primitives, infinite composition",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-strip-types --test src/**/*.test.ts"
+    "test": "bun test"
   },
   "keywords": [
     "agent",
@@ -24,6 +24,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@types/bun": "^1.3.9",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
