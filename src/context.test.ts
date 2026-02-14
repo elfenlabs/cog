@@ -59,4 +59,63 @@ describe('Context', () => {
     assert.equal(ctx.messages.length, 1)
     assert.equal(restored.messages.length, 2)
   })
+
+  it('fork() inherits parent messages', () => {
+    const parent = createContext()
+    parent.push('A')
+    parent.push('B')
+
+    const child = parent.fork()
+    child.push('C')
+
+    assert.equal(child.messages.length, 3)
+    assert.equal(child.messages[0]!.content, 'A')
+    assert.equal(child.messages[1]!.content, 'B')
+    assert.equal(child.messages[2]!.content, 'C')
+  })
+
+  it('fork() push is isolated from parent', () => {
+    const parent = createContext()
+    parent.push('A')
+
+    const child = parent.fork()
+    child.push('X')
+    child.push('Y')
+
+    assert.equal(parent.messages.length, 1)
+    assert.equal(child.messages.length, 3)
+  })
+
+  it('fork() serialize flattens the chain', () => {
+    const parent = createContext()
+    parent.push('A')
+
+    const child = parent.fork()
+    child.push('B')
+
+    const snapshot = child.serialize()
+    assert.equal(snapshot.messages.length, 2)
+    assert.equal(snapshot.messages[0]!.content, 'A')
+    assert.equal(snapshot.messages[1]!.content, 'B')
+  })
+
+  it('nested fork() chains correctly', () => {
+    const grandparent = createContext()
+    grandparent.push('A')
+
+    const parent = grandparent.fork()
+    parent.push('B')
+
+    const child = parent.fork()
+    child.push('C')
+
+    assert.equal(child.messages.length, 3)
+    assert.equal(child.messages[0]!.content, 'A')
+    assert.equal(child.messages[1]!.content, 'B')
+    assert.equal(child.messages[2]!.content, 'C')
+
+    // grandparent and parent remain untouched
+    assert.equal(grandparent.messages.length, 1)
+    assert.equal(parent.messages.length, 2)
+  })
 })

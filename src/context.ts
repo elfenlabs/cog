@@ -20,15 +20,29 @@ export type ContextOptions = {
 // ── Context ─────────────────────────────────────────────────────────────────
 
 export class Context {
+  private _parent: Context | null = null
   private _messages: Message[]
 
   constructor(opts?: ContextOptions) {
     this._messages = opts?.from ? structuredClone(opts.from.messages) : []
   }
 
-  /** All messages in the chain (readonly copy) */
+  /**
+   * Create a child context linked to this one (zero-copy).
+   * The child sees all parent messages as a read-only prefix
+   * and appends only to its own message array.
+   */
+  fork(): Context {
+    const child = new Context()
+    child._parent = this
+    return child
+  }
+
+  /** All messages in the chain (parent + own) */
   get messages(): readonly Message[] {
-    return this._messages
+    return this._parent
+      ? [...this._parent.messages, ...this._messages]
+      : this._messages
   }
 
   /**
@@ -44,9 +58,12 @@ export class Context {
     }
   }
 
-  /** Serialize to a JSON-safe snapshot */
+  /** Serialize to a JSON-safe flattened snapshot */
   serialize(): SerializedContext {
-    return { messages: structuredClone(this._messages) }
+    const all = this._parent
+      ? [...this._parent.messages, ...this._messages]
+      : this._messages
+    return { messages: structuredClone(all) }
   }
 }
 
