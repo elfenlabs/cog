@@ -1,5 +1,5 @@
 {
-  "name": "cog",
+  "name": "@elfenlabs/cog",
   "version": "0.1.0",
   "description": "A minimal agent SDK for TypeScript — three primitives, infinite composition",
   "type": "module",
@@ -11,8 +11,14 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "tsc",
     "test": "bun test"
   },
   "keywords": [
@@ -20,9 +26,20 @@
     "sdk",
     "llm",
     "context",
-    "state-machine"
+    "state-machine",
+    "ai",
+    "typescript"
   ],
+  "author": "Elfenlabs",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elfenlabs/cog.git"
+  },
+  "homepage": "https://github.com/elfenlabs/cog#readme",
+  "bugs": {
+    "url": "https://github.com/elfenlabs/cog/issues"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.9",
     "tsx": "^4.21.0",
