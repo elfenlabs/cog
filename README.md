@@ -1,347 +1,294 @@
-# 🧠 Cog — Agent SDK
+# 🧠 Cog
 
-An unopinionated agent framework for TypeScript. Two primitives, zero opinions on your LLM provider, prompt format, or orchestration strategy.
+A minimal agent SDK for TypeScript. Three primitives, zero opinions on your LLM provider.
 
 ```
-npm install cog
+npm install @elfenlabs/cog
 ```
-
-## Core Primitives
-
-| Primitive | What it does |
-|---|---|
-| **Context Chain** | Ordered collection of context nodes with pinning rules. You control what the LLM sees. |
-| **Control Flow Graph** | Declarative state machine. Nodes are actions (LLM call, tool, router, subgraph), edges are transitions. |
 
 ## Quick Start
 
 ```typescript
-import {
-  ContextChain,
-  defineGraph,
-  GraphRuntime,
-  key,
-} from 'cog'
-import type {
-  LLMProvider,
-  LLMResult,
-  LLMCallNodeConfig,
-  RouterNodeConfig,
-  ToolCallNodeConfig,
-  ToolDefinition,
-  ContextFormatter,
-} from 'cog'
+import { createContext, createTool, createOpenAIProvider, runAgent } from '@elfenlabs/cog'
 
-// 1. Define your LLM provider (OpenAI, Anthropic, vLLM, Ollama, etc.)
-const llm: LLMProvider = {
-  async generate(params) {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages: params.context,
-        tools: params.tools?.map(t => ({
-          type: 'function',
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: {
-              type: 'object',
-              properties: Object.fromEntries(
-                Object.entries(t.parameters).map(([k, v]) => [k, { type: v.type }]),
-              ),
-            },
-          },
-        })),
-      }),
-    })
-    const data = await res.json()
-    const msg = data.choices[0].message
-    return {
-      content: msg.content ?? '',
-      toolCalls: msg.tool_calls?.map(tc => ({
-        name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments),
-      })),
-    }
+// Define a tool
+const getWeather = createTool({
+  id: 'get_weather',
+  description: 'Get the current weather for a city',
+  schema: {
+    city: { type: 'string', description: 'The city name' },
   },
-}
-
-// 2. Define a context formatter (how the chain becomes LLM input)
-const formatter: ContextFormatter<Array<{ role: string; content: string }>> = (nodes) =>
-  nodes.map((n, i) => ({
-    role: i === 0 && n.pin.type === 'head' ? 'system' : 'user',
-    content: String(n.content),
-  }))
-
-// 3. Build a graph
-const graph = defineGraph({
-  nodes: {
-    think: {
-      type: 'llm', id: 'think',
-      instructions: 'Answer the question or use tools.',
-      next: [{ to: 'done' }],
-    } satisfies LLMCallNodeConfig,
-    done: {
-      type: 'llm', id: 'done',
-      instructions: 'Summarize.',
-    } satisfies LLMCallNodeConfig,
+  execute: async (args) => {
+    const { city } = args as { city: string }
+    return { city, temp: 22, condition: 'sunny' }
   },
-  entryNode: 'think',
-  terminalNodes: ['done'],
 })
 
-// 4. Run
-const chain = new ContextChain()
-chain.insert('You are a helpful assistant.', { type: 'head' })
-chain.insert('What is 2 + 2?')
+// Create context and provider
+const ctx = createContext()
+ctx.push("What's the weather in Tokyo?")
 
-const runtime = new GraphRuntime()
-const result = await runtime.run(graph, chain, {
-  llmProvider: llm,
-  contextFormatter: formatter,
+const provider = createOpenAIProvider('https://api.openai.com', 'gpt-4o', {
+  apiKey: process.env.OPENAI_API_KEY,
 })
 
-console.log(result.finalNodeId) // 'done'
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Your Agent                         │
-├─────────────────────────────────────────────────────────┤
-│  Runtime Layer    GraphRuntime, SideChannel, Errors      │
-│  Graph Layer      Nodes, Transitions, ToolRegistry       │
-│  Context Layer    ContextChain, PinRules, Formatters     │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Context Chain
-
-The context chain manages what the LLM sees. Nodes are ordered by **pin rules**:
-
-```typescript
-const chain = new ContextChain()
-
-// Head: always first (system prompts, instructions)
-chain.insert('You are a helpful assistant.', { type: 'head' })
-
-// Tail: always last (output formatting, reminders)
-chain.insert('Respond in JSON.', { type: 'tail' })
-
-// Floating: fills the middle (conversation, tool results)
-const msg = chain.insert('What is the capital of France?')
-
-// Relative: position relative to another node
-chain.insert('Important context about France.', { type: 'before', ref: msg })
-
-// Update in place
-chain.update(msg, 'What is the capital of Japan?')
-
-// Build into any format your LLM expects
-const messages = chain.build(formatter)
-```
-
-### Priority
-
-Head and tail nodes can have priority (lower = closer to the edge):
-
-```typescript
-chain.insert('CRITICAL SAFETY RULES', { type: 'head', priority: 0 })
-chain.insert('System prompt', { type: 'head', priority: 10 })
-// → CRITICAL SAFETY RULES comes first
-```
-
-### Serialization
-
-```typescript
-const snapshot = chain.serialize()
-const restored = ContextChain.deserialize(snapshot)
-```
-
-## Graph Definition
-
-A graph is a set of **action nodes** connected by **transitions**:
-
-```typescript
-const graph = defineGraph({
-  tools: [searchTool, calculatorTool], // graph-wide tools
-
-  nodes: {
-    analyze: {
-      type: 'llm', id: 'analyze',
-      instructions: 'Analyze the input.',
-      next: [{ to: 'route' }],
-    } satisfies LLMCallNodeConfig,
-
-    route: {
-      type: 'router', id: 'route',
-      route: (result, sideChannel) => {
-        const r = result as LLMResult
-        return r.toolCalls?.length ? 'tool' : 'done'
-      },
-      next: [
-        { to: 'executeTool', on: 'tool' },
-        { to: 'respond', on: 'done' },
-      ],
-    } satisfies RouterNodeConfig,
-
-    executeTool: {
-      type: 'tool', id: 'executeTool',
-      execute: async (input, ctx) => {
-        // run tool, add result to ctx.chain
-        return result
-      },
-      next: [{ to: 'analyze' }], // loop back
-    } satisfies ToolCallNodeConfig,
-
-    respond: {
-      type: 'llm', id: 'respond',
-      instructions: 'Provide the final answer.',
-    } satisfies LLMCallNodeConfig,
-  },
-
-  entryNode: 'analyze',
-  terminalNodes: ['respond'],
+// Run the agent
+const result = await runAgent({
+  ctx,
+  provider,
+  instruction: 'You are a helpful assistant. Use tools when needed.',
+  tools: [getWeather],
 })
+
+console.log(result.response) // "The weather in Tokyo is 22°C and sunny."
+console.log(result.steps)    // 2
+console.log(result.usage)    // { promptTokens, completionTokens, totalTokens }
 ```
 
-### Node Types
+## Primitives
 
-| Type | Purpose |
+| Primitive | What it is |
 |---|---|
-| `llm` | Calls the LLM provider with the current context |
-| `tool` | Executes arbitrary code (API calls, computation, etc.) |
-| `router` | Inspects the last result and picks the next path |
-| `subgraph` | Runs a nested graph (isolated or inherited context) |
+| **Context** | Append-only message chain. You push messages in, the agent loop reads them out. |
+| **Tool** | Schema + execute function. The agent calls tools automatically based on model output. |
+| **Agent** | The loop. Calls the provider, executes tool calls, repeats until the model responds with text. |
 
-### Transition Guards
+## Context
 
-Route based on output content, not just labels:
+An ordered `Message[]` chain. Push strings (become `user` messages) or full `Message` objects.
 
 ```typescript
-next: [
-  {
-    to: 'handleTools',
-    when: (output) => (output as LLMResult).toolCalls?.length > 0,
-  },
-  { to: 'done' }, // default fallback
-]
+import { createContext } from '@elfenlabs/cog'
+
+const ctx = createContext()
+
+// Strings become user messages
+ctx.push('What is 2 + 2?')
+
+// Full messages for other roles
+ctx.push({ role: 'system', content: 'You are a math tutor.' })
+
+// Read messages
+ctx.messages // readonly Message[]
+
+// Serialize / restore
+const snapshot = ctx.serialize()
+const restored = createContext({ from: snapshot })
 ```
 
-### Scratch Nodes
-
-Temporary context that lives only during a node's execution:
+### Message Shape
 
 ```typescript
-{
-  type: 'llm', id: 'analyze',
-  instructions: 'Analyze the raw data.',
-  scratchNodes: [{
-    content: 'RAW DATA: ...',
-    collapseOnExit: async (content) => `Summary: ${content.slice(0, 100)}`,
-  }],
+type Message = {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  reasoning?: string        // chain-of-thought from reasoning models
+  toolCallId?: string       // links tool results back to the call
+  toolCalls?: ToolCallRequest[]  // tool calls requested by the model
 }
-// The raw data is visible during execution, then collapsed to a summary
 ```
 
-### Visualizer
+## Tool
 
-Inspect the graph topology before execution:
+A tool is an `id`, a `description`, a `schema`, and an `execute` function.
 
 ```typescript
-import { visualize } from 'cog'
+import { createTool } from '@elfenlabs/cog'
 
-console.log(visualize(graph, 'ascii'))
-// ┌─────────────────────────────────────┐
-// │          Control Flow Graph          │
-// ├─────────────────────────────────────┤
-// │  🤖 analyze [ENTRY]
-// │    └→ route
-// │  🔀 route
-// │    ├→ executeTool [tool]
-// │    └→ respond [done]
-// │  🔧 executeTool
-// │    └→ analyze
-// │  🤖 respond [TERMINAL]
-// └─────────────────────────────────────┘
+const calculator = createTool({
+  id: 'calculator',
+  description: 'Evaluate a math expression',
+  schema: {
+    expression: { type: 'string', description: 'The expression to evaluate', required: true },
+  },
+  execute: async (args) => {
+    const { expression } = args as { expression: string }
+    return { result: eval(expression) }
+  },
+})
 
-console.log(visualize(graph, 'mermaid'))
-// graph TD
-//   analyze["🤖 analyze"] --> route["🔀 route"]
-//   route -->|tool| executeTool["🔧 executeTool"]
-//   ...
+// The .spec property gives you the wire format for provider APIs
+calculator.spec // { name, description, parameters }
 ```
 
-## Runtime
+### Parameter Types
 
 ```typescript
-const runtime = new GraphRuntime()
-const result = await runtime.run(graph, chain, {
-  llmProvider: myProvider,
-  contextFormatter: myFormatter,
+type ToolParameter = {
+  type: 'string' | 'number' | 'boolean'
+  description: string
+  required?: boolean  // default: true
+}
+```
+
+## Agent Loop
+
+`runAgent` calls the provider in a loop, executing tool calls until the model responds with text only.
+
+```typescript
+import { runAgent } from '@elfenlabs/cog'
+
+const result = await runAgent({
+  ctx,                    // Context — the conversation so far
+  provider,               // Provider — any LLM backend
+  instruction: '...',     // system prompt (prepended to every call)
+  tools: [tool1, tool2],  // available tools
 
   // Limits
-  maxSteps: 20,
+  maxSteps: 50,           // default: 50
   signal: abortController.signal,
 
-  // Error handling
-  onError: 'transition', // or 'throw'
-  errorNode: 'handleError',
+  // Streaming callbacks
+  onThinkingStart: () => {},
+  onThinking: (chunk) => {},      // reasoning tokens (dim/hidden)
+  onThinkingEnd: () => {},
+  onOutputStart: () => {},
+  onOutput: (chunk) => {},        // content tokens (visible)
+  onOutputEnd: () => {},
 
-  // Observability
-  onNodeEnter: (id) => console.log(`▶ ${id}`),
-  onNodeExit: (id, result) => console.log(`◀ ${id}`),
-  onTransition: (from, to) => console.log(`${from} → ${to}`),
+  // Tool lifecycle hooks
+  onBeforeToolCall: async (tool, args) => {
+    // return false to block the call
+  },
+  onAfterToolCall: (tool, args, result) => {},
 })
 
-result.finalNodeId  // which terminal node was reached
-result.steps        // how many nodes were executed
-result.sideChannel  // inter-node communication data
-result.chain        // the final context chain
+result.response  // final text response
+result.steps     // number of provider calls made
+result.usage     // { promptTokens, completionTokens, totalTokens }
 ```
 
-## SideChannel
+### How the Loop Works
 
-Type-safe key-value store for inter-node communication:
-
-```typescript
-import { SideChannel, key } from 'cog'
-
-const issueCount = key<number>('issueCount')
-const findings = key<string[]>('findings')
-
-// In a tool node:
-ctx.sideChannel.set(issueCount, 3)
-ctx.sideChannel.set(findings, ['unused import', 'missing type'])
-
-// In a later node:
-const count = ctx.sideChannel.get(issueCount) // number | undefined
+```
+┌─────────────────────────────────────────────┐
+│  system prompt + ctx.messages → provider    │
+│                    ↓                        │
+│  ┌─ tool calls? ──────────────────────────┐ │
+│  │ YES → execute tools → push results     │ │
+│  │       → loop back to provider          │ │
+│  ├─ text content? ────────────────────────┤ │
+│  │ YES → push assistant message → return  │ │
+│  ├─ reasoning only? ─────────────────────┤  │
+│  │ YES → push reasoning → loop           │  │
+│  └────────────────────────────────────────┘ │
+└─────────────────────────────────────────────┘
 ```
 
-## Tool Scoping
+## Provider
 
-Tools can be scoped at different levels:
+The `Provider` interface is a single method. Implement it for any LLM backend.
 
 ```typescript
-defineGraph({
-  tools: [globalTool],     // available to all nodes
-  nodes: {
-    analyze: {
-      type: 'llm', id: 'analyze',
-      tools: [specialTool], // only available in this node
-      toolScope: 'node',    // 'node' or 'subgraph' (default)
-    },
+interface Provider {
+  generate(params: {
+    messages: Message[]
+    tools?: ToolSpec[]
+    signal?: AbortSignal
+    stream?: StreamCallbacks
+  }): Promise<GenerateResult>
+}
+
+type GenerateResult = {
+  content?: string
+  reasoning?: string
+  toolCalls?: ToolCallRequest[]
+  usage?: Usage
+}
+
+type StreamCallbacks = {
+  onReasoning?: (chunk: string) => void
+  onContent?: (chunk: string) => void
+}
+```
+
+### Built-in: OpenAI-Compatible Provider
+
+Works with OpenAI, vLLM, OpenRouter, Ollama, LiteLLM, and any OpenAI-compatible API. Supports streaming (SSE) with reasoning model support (`reasoning_content`).
+
+```typescript
+import { createOpenAIProvider } from '@elfenlabs/cog'
+
+// OpenAI
+const openai = createOpenAIProvider('https://api.openai.com', 'gpt-4o', {
+  apiKey: process.env.OPENAI_API_KEY,
+})
+
+// Local vLLM
+const vllm = createOpenAIProvider('http://localhost:8000', 'my-model')
+
+// OpenRouter
+const openrouter = createOpenAIProvider('https://openrouter.ai/api', 'anthropic/claude-sonnet-4.5', {
+  apiKey: process.env.OPENROUTER_API_KEY,
+  temperature: 0.2,
+})
+```
+
+## Sub-Agent Composition
+
+Agents are just functions. Wrap `runAgent` inside a tool to create sub-agents with isolated context.
+
+```typescript
+const searchOrders = createTool({
+  id: 'search_orders',
+  description: 'Search through paginated orders to find a match',
+  schema: {
+    query: { type: 'string', description: 'What to search for' },
+  },
+  execute: async (args) => {
+    const { query } = args as { query: string }
+
+    // Sub-agent gets its own isolated context
+    const subCtx = createContext()
+    subCtx.push(`Find: ${query}`)
+
+    const fetchPage = createTool({
+      id: 'fetch_page',
+      description: 'Fetch a page of orders',
+      schema: { page: { type: 'number', description: 'Page number' } },
+      execute: async (a) => api.getOrders((a as { page: number }).page),
+    })
+
+    const result = await runAgent({
+      ctx: subCtx,
+      provider,
+      instruction: 'Search through pages until you find the item or exhaust all pages.',
+      tools: [fetchPage],
+      maxSteps: 20,
+    })
+
+    // Only the final answer bubbles up — no pagination noise in parent context
+    return result.response
   },
 })
+
+// Parent agent uses the sub-agent as a regular tool
+const result = await runAgent({
+  ctx: createContext(),
+  provider,
+  instruction: 'Use search_orders to look up order information.',
+  tools: [searchOrders],
+})
 ```
 
-Child tools override parent tools with the same name.
+## Error Handling
+
+```typescript
+import { MaxStepsError, AgentAbortError } from '@elfenlabs/cog'
+
+try {
+  await runAgent({ ctx, provider, instruction: '...', tools, maxSteps: 10 })
+} catch (err) {
+  if (err instanceof MaxStepsError) {
+    // Agent exceeded step limit
+  }
+  if (err instanceof AgentAbortError) {
+    // AbortSignal was triggered
+  }
+}
+```
+
+Unknown tool calls and tool execution errors are automatically caught and fed back to the model as `tool` messages, letting it recover gracefully.
 
 ## License
 
