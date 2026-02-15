@@ -24,9 +24,15 @@ export type Message = {
 
 /** Parameter definition for a tool */
 export type ToolParameter = {
-  type: 'string' | 'number' | 'boolean'
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
   description: string
   required?: boolean
+  /** For 'object' — nested parameter definitions */
+  properties?: Record<string, ToolParameter>
+  /** For 'array' — schema of each array element */
+  items?: ToolParameter
+  /** For 'string' — restrict to an explicit set of values */
+  enum?: string[]
 }
 
 /** Tool specification sent to the provider */

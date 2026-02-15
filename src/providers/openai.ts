@@ -5,7 +5,7 @@
  * Supports streaming (SSE) with reasoning_content extraction.
  */
 
-import type { Provider, ToolCallRequest, StreamCallbacks, Message, ToolSpec, Usage } from '../types.js'
+import type { Provider, ToolCallRequest, ToolParameter, StreamCallbacks, Message, ToolSpec, Usage } from '../types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -34,6 +34,35 @@ function toAPIMessages(messages: Message[]) {
   })
 }
 
+// ── JSON Schema Translation ─────────────────────────────────────────────────
+
+/** Recursively translate a ToolParameter into a JSON Schema object */
+function toJSONSchema(param: ToolParameter): Record<string, unknown> {
+  const schema: Record<string, unknown> = {
+    type: param.type,
+    description: param.description,
+  }
+
+  if (param.enum) {
+    schema.enum = param.enum
+  }
+
+  if (param.type === 'object' && param.properties) {
+    schema.properties = Object.fromEntries(
+      Object.entries(param.properties).map(([k, v]) => [k, toJSONSchema(v)]),
+    )
+    schema.required = Object.entries(param.properties)
+      .filter(([_, v]) => v.required !== false)
+      .map(([k]) => k)
+  }
+
+  if (param.type === 'array' && param.items) {
+    schema.items = toJSONSchema(param.items)
+  }
+
+  return schema
+}
+
 /** Convert internal Cog tool specs to OpenAI function-calling format */
 function toAPITools(tools: ToolSpec[]) {
   return tools.map(t => ({
@@ -44,10 +73,7 @@ function toAPITools(tools: ToolSpec[]) {
       parameters: {
         type: 'object',
         properties: Object.fromEntries(
-          Object.entries(t.parameters).map(([k, v]) => [
-            k,
-            { type: v.type, description: v.description },
-          ]),
+          Object.entries(t.parameters).map(([k, v]) => [k, toJSONSchema(v)]),
         ),
         required: Object.entries(t.parameters)
           .filter(([_, v]) => v.required !== false)
