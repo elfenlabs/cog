@@ -134,6 +134,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
       ? (chunk: string) => {
           if (!isOutputting) {
             isOutputting = true
+            endThinking()
             onOutputStart?.()
           }
           onOutput(chunk)
