@@ -177,6 +177,16 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
       })
 
       for (const call of result.toolCalls) {
+        // Handle malformed tool call arguments from model
+        if (call.parseError) {
+          ctx.push({
+            role: 'tool',
+            content: `Error: ${call.parseError}. Please retry with valid JSON arguments.`,
+            toolCallId: call.id,
+          })
+          continue
+        }
+
         const tool = toolMap.get(call.name)
         if (!tool) {
           // Unknown tool — append error as tool result so model can recover

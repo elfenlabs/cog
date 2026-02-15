@@ -9,6 +9,8 @@ export type ToolCallRequest = {
   id: string
   name: string
   arguments: Record<string, unknown>
+  /** Present when the model produced invalid JSON for arguments */
+  parseError?: string
 }
 
 /** A message in the context chain */

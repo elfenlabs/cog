@@ -293,4 +293,47 @@ describe('runAgent', () => {
 
     assert.equal(captured, 'echoed')
   })
+
+  it('handles malformed tool call arguments (parseError) gracefully', async () => {
+    const tool = createTool({
+      id: 'my_tool',
+      description: 'A tool',
+      execute: async () => 'should not run',
+    })
+
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'my_tool',
+            arguments: {},
+            parseError: 'Malformed tool call arguments (invalid JSON): {broken',
+          },
+        ],
+      },
+      { content: 'Recovered from bad JSON.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Handle parse errors',
+      tools: [tool],
+    })
+
+    assert.equal(result.response, 'Recovered from bad JSON.')
+    assert.equal(result.steps, 2)
+
+    // The error message should be in context as a tool result
+    const toolMsg = ctx.messages.find(m => m.role === 'tool')
+    assert.ok(toolMsg)
+    assert.ok(toolMsg!.content.includes('Malformed tool call arguments'))
+    assert.ok(toolMsg!.content.includes('Please retry with valid JSON arguments'))
+    assert.equal(toolMsg!.toolCallId, 'c1')
+  })
 })
+

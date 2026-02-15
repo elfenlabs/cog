@@ -83,14 +83,29 @@ function toAPITools(tools: ToolSpec[]) {
   }))
 }
 
+// ── Safe JSON Parsing ───────────────────────────────────────────────────────
+
+/** Parse JSON without throwing — returns empty args + error string on failure */
+function safeParseArgs(raw: string): { args: Record<string, unknown>; error?: string } {
+  try {
+    return { args: JSON.parse(raw) }
+  } catch {
+    return { args: {}, error: `Malformed tool call arguments (invalid JSON): ${raw}` }
+  }
+}
+
 /** Parse tool calls from a non-streaming response message */
 function parseToolCalls(toolCalls: any[] | undefined): ToolCallRequest[] | undefined {
   if (!toolCalls) return undefined
-  return toolCalls.map((tc: any) => ({
-    id: tc.id,
-    name: tc.function.name,
-    arguments: JSON.parse(tc.function.arguments),
-  }))
+  return toolCalls.map((tc: any) => {
+    const { args, error } = safeParseArgs(tc.function.arguments)
+    return {
+      id: tc.id,
+      name: tc.function.name,
+      arguments: args,
+      ...(error ? { parseError: error } : {}),
+    }
+  })
 }
 
 // ── SSE Streaming ───────────────────────────────────────────────────────────
@@ -120,7 +135,12 @@ async function readSSEStream(
       const payload = line.slice(6).trim()
       if (payload === '[DONE]') continue
 
-      const chunk = JSON.parse(payload)
+      let chunk: any
+      try {
+        chunk = JSON.parse(payload)
+      } catch {
+        continue // skip malformed SSE line
+      }
 
       // Usage arrives in the final chunk (when stream_options.include_usage is set)
       if (chunk.usage) {
@@ -159,11 +179,15 @@ async function readSSEStream(
 
   const toolCalls: ToolCallRequest[] | undefined =
     toolCallsMap.size > 0
-      ? Array.from(toolCallsMap.values()).map(tc => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: JSON.parse(tc.args || '{}'),
-        }))
+      ? Array.from(toolCallsMap.values()).map(tc => {
+          const { args, error } = safeParseArgs(tc.args || '{}')
+          return {
+            id: tc.id,
+            name: tc.name,
+            arguments: args,
+            ...(error ? { parseError: error } : {}),
+          }
+        })
       : undefined
 
   return {
