@@ -17,6 +17,7 @@ export type AgentConfig = {
   instruction: string
   tools: Tool<any>[]
   maxSteps?: number
+  defaultMaxOutputChars?: number
   signal?: AbortSignal
   onThinkingStart?: () => void
   onThinking?: (chunk: string) => void
@@ -57,6 +58,15 @@ export class AgentAbortError extends Error {
   }
 }
 
+// ── Truncation ──────────────────────────────────────────────────────────────
+
+const DEFAULT_MAX_OUTPUT_CHARS = 10_000
+
+function truncate(content: string, limit: number): string {
+  if (content.length <= limit) return content
+  return content.slice(0, limit) + `\n… (truncated: ${content.length} → ${limit} chars)`
+}
+
 // ── Agent Loop ──────────────────────────────────────────────────────────────
 
 export async function runAgent(config: AgentConfig): Promise<AgentResult> {
@@ -66,6 +76,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     instruction,
     tools,
     maxSteps = 50,
+    defaultMaxOutputChars,
     signal,
     onThinkingStart,
     onThinking,
@@ -213,6 +224,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
         }
 
         // Execute the tool
+        const limit = tool.maxOutputChars ?? defaultMaxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS
         try {
           const toolResult = await tool.execute(call.arguments as any, ctx)
           const content =
@@ -222,11 +234,11 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
 
           ctx.push({
             role: 'tool',
-            content,
+            content: truncate(content, limit),
             toolCallId: call.id,
           })
 
-          // Hook: after
+          // Hook: after (receives raw, untruncated result)
           if (onAfterToolCall) {
             onAfterToolCall(tool, call.arguments, toolResult)
           }
@@ -234,7 +246,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
           const message = err instanceof Error ? err.message : String(err)
           ctx.push({
             role: 'tool',
-            content: `Error: ${message}`,
+            content: truncate(`Error: ${message}`, limit),
             toolCallId: call.id,
           })
         }

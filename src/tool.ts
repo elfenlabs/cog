@@ -14,6 +14,7 @@ export type ToolConfig<TArgs = Record<string, unknown>> = {
   description: string
   schema?: Record<string, ToolParameter>
   execute: (args: TArgs, ctx: Context) => Promise<unknown>
+  maxOutputChars?: number
 }
 
 // ── Tool ────────────────────────────────────────────────────────────────────
@@ -23,12 +24,14 @@ export class Tool<TArgs = Record<string, unknown>> {
   readonly description: string
   readonly schema: Record<string, ToolParameter>
   readonly execute: (args: TArgs, ctx: Context) => Promise<unknown>
+  readonly maxOutputChars?: number
 
   constructor(config: ToolConfig<TArgs>) {
     this.id = config.id
     this.description = config.description
     this.schema = config.schema ?? {}
     this.execute = config.execute
+    this.maxOutputChars = config.maxOutputChars
   }
 
   /** Tool specification for the provider (OpenAI-compatible format) */

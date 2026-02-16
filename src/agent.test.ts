@@ -335,5 +335,97 @@ describe('runAgent', () => {
     assert.ok(toolMsg!.content.includes('Please retry with valid JSON arguments'))
     assert.equal(toolMsg!.toolCallId, 'c1')
   })
+
+  it('truncates tool output exceeding default limit', async () => {
+    const bigOutput = 'x'.repeat(15_000)
+    const tool = createTool({
+      id: 'big',
+      description: 'Returns big output',
+      execute: async () => bigOutput,
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'c1', name: 'big', arguments: {} }] },
+      { content: 'Done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [tool],
+    })
+
+    const toolMsg = ctx.messages.find(m => m.role === 'tool')
+    assert.ok(toolMsg)
+    assert.ok(toolMsg!.content.length < bigOutput.length)
+    assert.ok(toolMsg!.content.includes('truncated'))
+    assert.ok(toolMsg!.content.includes('15000'))
+    assert.ok(toolMsg!.content.includes('10000'))
+  })
+
+  it('per-tool maxOutputChars overrides default', async () => {
+    const tool = createTool({
+      id: 'small',
+      description: 'Small cap',
+      maxOutputChars: 50,
+      execute: async () => 'a'.repeat(200),
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'c1', name: 'small', arguments: {} }] },
+      { content: 'Done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [tool],
+    })
+
+    const toolMsg = ctx.messages.find(m => m.role === 'tool')
+    assert.ok(toolMsg)
+    // First 50 chars + truncation marker
+    assert.ok(toolMsg!.content.startsWith('a'.repeat(50)))
+    assert.ok(toolMsg!.content.includes('truncated'))
+    assert.ok(toolMsg!.content.includes('→ 50 chars'))
+  })
+
+  it('agent-level defaultMaxOutputChars overrides hardcoded default', async () => {
+    const tool = createTool({
+      id: 'medium',
+      description: 'No per-tool cap',
+      execute: async () => 'b'.repeat(500),
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'c1', name: 'medium', arguments: {} }] },
+      { content: 'Done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [tool],
+      defaultMaxOutputChars: 100,
+    })
+
+    const toolMsg = ctx.messages.find(m => m.role === 'tool')
+    assert.ok(toolMsg)
+    assert.ok(toolMsg!.content.startsWith('b'.repeat(100)))
+    assert.ok(toolMsg!.content.includes('truncated'))
+    assert.ok(toolMsg!.content.includes('→ 100 chars'))
+  })
 })
 
