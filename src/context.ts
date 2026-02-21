@@ -58,6 +58,52 @@ export class Context {
     }
   }
 
+  /**
+   * Pin a message at the given index (relative to own _messages).
+   * Supports negative indices (-1 = last pushed).
+   */
+  pin(index: number): void {
+    const resolved = index < 0 ? this._messages.length + index : index
+    if (resolved < 0 || resolved >= this._messages.length) {
+      throw new RangeError(`pin index ${index} out of range (own messages: ${this._messages.length})`)
+    }
+    this._messages[resolved]!.pinned = true
+  }
+
+  /**
+   * Unpin a message at the given index (relative to own _messages).
+   * Supports negative indices (-1 = last pushed).
+   */
+  unpin(index: number): void {
+    const resolved = index < 0 ? this._messages.length + index : index
+    if (resolved < 0 || resolved >= this._messages.length) {
+      throw new RangeError(`unpin index ${index} out of range (own messages: ${this._messages.length})`)
+    }
+    delete this._messages[resolved]!.pinned
+  }
+
+  /**
+   * Remove messages by flattened index (as seen in .messages).
+   * Only owned messages can be evicted — parent messages are immutable.
+   * Indices that refer to parent messages will throw.
+   */
+  evict(indices: number[]): void {
+    if (indices.length === 0) return
+    const parentLen = this._parent ? this._parent.messages.length : 0
+    const localIndices = new Set<number>()
+
+    for (const idx of indices) {
+      if (idx < parentLen) {
+        throw new RangeError(
+          `Cannot evict index ${idx}: belongs to parent context (parent has ${parentLen} messages)`,
+        )
+      }
+      localIndices.add(idx - parentLen)
+    }
+
+    this._messages = this._messages.filter((_, i) => !localIndices.has(i))
+  }
+
   /** Serialize to a JSON-safe flattened snapshot */
   serialize(): SerializedContext {
     const all = this._parent

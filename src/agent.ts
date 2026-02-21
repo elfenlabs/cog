@@ -7,7 +7,9 @@
 
 import type { Context } from './context.js'
 import type { Tool } from './tool.js'
-import type { Message, Provider, StreamCallbacks, Usage } from './types.js'
+import type { EvictionStrategy, TokenCounter } from './strategy.js'
+import { defaultTokenCounter } from './strategy.js'
+import type { Message, Provider, ToolSpec, StreamCallbacks, Usage } from './types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -17,6 +19,12 @@ export type AgentConfig = {
   instruction: string
   tools: Tool<any>[]
   maxSteps?: number
+  /** Max estimated tokens for the full request. Default: 100_000 */
+  maxContextTokens?: number
+  /** Automatic compaction strategy. Default: none (no auto-compaction) */
+  evictionStrategy?: EvictionStrategy
+  /** Token estimation function. Default: text.length / 4 */
+  tokenCounter?: TokenCounter
   defaultMaxOutputChars?: number
   signal?: AbortSignal
   onThinkingStart?: () => void
@@ -58,6 +66,15 @@ export class AgentAbortError extends Error {
   }
 }
 
+export class ContextBudgetError extends Error {
+  constructor(fixedCost: number, maxTokens: number) {
+    super(
+      `Fixed context (${Math.round(fixedCost)} tokens) exceeds maxContextTokens (${maxTokens})`,
+    )
+    this.name = 'ContextBudgetError'
+  }
+}
+
 // ── Truncation ──────────────────────────────────────────────────────────────
 
 const DEFAULT_MAX_OUTPUT_CHARS = 10_000
@@ -65,6 +82,36 @@ const DEFAULT_MAX_OUTPUT_CHARS = 10_000
 function truncate(content: string, limit: number): string {
   if (content.length <= limit) return content
   return content.slice(0, limit) + `\n… (truncated: ${content.length} → ${limit} chars)`
+}
+
+// ── Budget ──────────────────────────────────────────────────────────────────
+
+/** Estimate token cost of a single message (content + reasoning + tool call data) */
+function messageTokenCost(msg: Message, tokenCounter: TokenCounter): number {
+  let text = msg.content
+  if (msg.reasoning) text += msg.reasoning
+  if (msg.toolCalls) text += JSON.stringify(msg.toolCalls)
+  if (msg.toolCallId) text += msg.toolCallId
+  return tokenCounter(text)
+}
+
+/** Calculate the fixed token cost (instruction + tools + pinned messages) */
+function calculateFixedCost(
+  instruction: string,
+  toolSpecs: ToolSpec[],
+  ctx: Context,
+  tokenCounter: TokenCounter,
+): number {
+  let cost = tokenCounter(instruction)
+  if (toolSpecs.length > 0) {
+    cost += tokenCounter(JSON.stringify(toolSpecs))
+  }
+  for (const msg of ctx.messages) {
+    if (msg.pinned) {
+      cost += messageTokenCost(msg, tokenCounter)
+    }
+  }
+  return cost
 }
 
 // ── Agent Loop ──────────────────────────────────────────────────────────────
@@ -76,6 +123,9 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     instruction,
     tools,
     maxSteps = 50,
+    maxContextTokens = 100_000,
+    evictionStrategy,
+    tokenCounter = defaultTokenCounter,
     defaultMaxOutputChars,
     signal,
     onThinkingStart,
@@ -121,6 +171,16 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     // Check step limit
     if (steps >= maxSteps) {
       throw new MaxStepsError(maxSteps)
+    }
+
+    // Compact context if strategy is configured
+    if (evictionStrategy) {
+      const fixedCost = calculateFixedCost(instruction, toolSpecs, ctx, tokenCounter)
+      const budget = maxContextTokens - fixedCost
+      if (budget <= 0) {
+        throw new ContextBudgetError(fixedCost, maxContextTokens)
+      }
+      evictionStrategy.compact(ctx, budget, tokenCounter)
     }
 
     // Build messages: instruction as system prompt + context messages

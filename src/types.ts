@@ -20,6 +20,8 @@ export type Message = {
   reasoning?: string
   toolCallId?: string
   toolCalls?: ToolCallRequest[]
+  /** When true, this message is protected from eviction */
+  pinned?: boolean
 }
 
 // ── Tool Schema ─────────────────────────────────────────────────────────────

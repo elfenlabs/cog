@@ -427,5 +427,102 @@ describe('runAgent', () => {
     assert.ok(toolMsg!.content.includes('truncated'))
     assert.ok(toolMsg!.content.includes('→ 100 chars'))
   })
+
+  it('runs compaction before generate() when strategy is set', async () => {
+    // Fill context with enough messages to trigger eviction
+    const ctx = createContext()
+    for (let i = 0; i < 10; i++) {
+      ctx.push('M'.repeat(100)) // 100 chars each
+    }
+
+    const provider = mockProvider([{ content: 'Done.' }])
+    const { SlidingWindowStrategy } = await import('./strategy.js')
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [],
+      maxContextTokens: 300, // 300 tokens budget total
+      evictionStrategy: new SlidingWindowStrategy(),
+      tokenCounter: (text: string) => text.length, // 1 char = 1 token
+    })
+
+    assert.equal(result.response, 'Done.')
+    // Messages should have been compacted — fewer than the original 10 + 1 (assistant)
+    // instruction "Go" = 2 tokens, so budget for messages = 298
+    // Each message is 100 tokens, so at most 2 fit
+    assert.ok(ctx.messages.length < 11) // compaction happened
+  })
+
+  it('throws ContextBudgetError when fixed cost exceeds limit', async () => {
+    const ctx = createContext()
+    ctx.push('hello')
+
+    const provider = mockProvider([{ content: 'Done.' }])
+    const { SlidingWindowStrategy } = await import('./strategy.js')
+    const { ContextBudgetError } = await import('./agent.js')
+
+    await assert.rejects(
+      () =>
+        runAgent({
+          ctx,
+          provider,
+          instruction: 'X'.repeat(500), // 500 token instruction
+          tools: [],
+          maxContextTokens: 100, // only 100 tokens budget
+          evictionStrategy: new SlidingWindowStrategy(),
+          tokenCounter: (text: string) => text.length,
+        }),
+      ContextBudgetError,
+    )
+  })
+
+  it('pinned messages survive compaction through agent loop', async () => {
+    const ctx = createContext()
+    ctx.push({ role: 'user', content: 'P'.repeat(50), pinned: true })
+    for (let i = 0; i < 5; i++) {
+      ctx.push('X'.repeat(100))
+    }
+
+    const provider = mockProvider([{ content: 'Done.' }])
+    const { SlidingWindowStrategy } = await import('./strategy.js')
+
+    await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [],
+      maxContextTokens: 200,
+      evictionStrategy: new SlidingWindowStrategy(),
+      tokenCounter: (text: string) => text.length,
+    })
+
+    // Pinned message must survive
+    const pinned = ctx.messages.filter(m => m.pinned)
+    assert.equal(pinned.length, 1)
+    assert.equal(pinned[0]!.content, 'P'.repeat(50))
+  })
+
+  it('no compaction when evictionStrategy is not set (backward compatible)', async () => {
+    const ctx = createContext()
+    for (let i = 0; i < 10; i++) {
+      ctx.push('M'.repeat(100))
+    }
+
+    const provider = mockProvider([{ content: 'Done.' }])
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [],
+      // No evictionStrategy — should not compact
+    })
+
+    assert.equal(result.response, 'Done.')
+    // All 10 user messages + 1 assistant response = 11
+    assert.equal(ctx.messages.length, 11)
+  })
 })
 
