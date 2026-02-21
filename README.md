@@ -85,6 +85,7 @@ type Message = {
   reasoning?: string        // chain-of-thought from reasoning models
   toolCallId?: string       // links tool results back to the call
   toolCalls?: ToolCallRequest[]  // tool calls requested by the model
+  pinned?: boolean          // protected from eviction (see Context Window Management)
 }
 ```
 
@@ -115,9 +116,12 @@ calculator.spec // { name, description, parameters }
 
 ```typescript
 type ToolParameter = {
-  type: 'string' | 'number' | 'boolean'
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
   description: string
-  required?: boolean  // default: true
+  required?: boolean       // default: true
+  properties?: Record<string, ToolParameter>  // for 'object'
+  items?: ToolParameter    // for 'array'
+  enum?: string[]          // for 'string'
 }
 ```
 
@@ -137,6 +141,11 @@ const result = await runAgent({
   // Limits
   maxSteps: 50,           // default: 50
   signal: abortController.signal,
+
+  // Context window management (see below)
+  maxContextTokens: 100_000,
+  evictionStrategy: new SlidingWindowStrategy(),
+  tokenCounter: (text) => text.length / 4,  // default
 
   // Streaming callbacks
   onThinkingStart: () => {},
@@ -271,10 +280,94 @@ const result = await runAgent({
 })
 ```
 
+## Context Window Management
+
+LLM APIs have context limits. When the conversation exceeds the limit, some providers return a 400 error — others **silently truncate from the beginning**, evicting your system prompt first. Cog prevents this with automatic compaction.
+
+### Automatic Compaction
+
+Pass an `evictionStrategy` to `runAgent` and Cog will compact the context before every `generate()` call:
+
+```typescript
+import { runAgent, SlidingWindowStrategy } from '@elfenlabs/cog'
+
+const result = await runAgent({
+  ctx,
+  provider,
+  instruction: 'You are a helpful assistant.',
+  tools: [myTool],
+  maxContextTokens: 100_000,                // token budget (default: 100k)
+  evictionStrategy: new SlidingWindowStrategy(), // enable auto-compaction
+})
+```
+
+`SlidingWindowStrategy` evicts the oldest non-pinned messages first. Tool call groups (assistant message + tool results) are always evicted as a unit to maintain structural integrity.
+
+### Pinning Messages
+
+Pin critical messages to protect them from eviction:
+
+```typescript
+const ctx = createContext()
+
+ctx.push({ role: 'user', content: 'Project spec: build a CLI tool that...' })
+ctx.pin(-1) // protect from eviction (-1 = last pushed)
+
+ctx.push({ role: 'user', content: 'Also, here are the requirements...' })
+ctx.pin(-1)
+
+// Later, if needed:
+ctx.unpin(0) // remove protection
+```
+
+Pinned messages are never evicted. The system prompt (passed as `instruction`) and tool definitions are always protected automatically — they're budgeted as fixed costs.
+
+### Custom Token Counter
+
+The default token estimator uses `text.length / 4` (~3.5–4 chars per token for English). For precise counting:
+
+```typescript
+import { encode } from 'tiktoken'
+
+const result = await runAgent({
+  // ...
+  tokenCounter: (text) => encode(text).length,
+})
+```
+
+### On-Demand Compaction
+
+Strategies can also be called directly — by the host app, a tool, or any caller:
+
+```typescript
+import { SlidingWindowStrategy } from '@elfenlabs/cog'
+
+const strategy = new SlidingWindowStrategy()
+const tokenCounter = (text: string) => text.length / 4
+
+// Proactive compaction at 50% to fight context rot
+strategy.compact(ctx, maxTokens * 0.5, tokenCounter)
+```
+
+### Custom Strategies
+
+Implement the `EvictionStrategy` interface for custom behavior:
+
+```typescript
+import type { EvictionStrategy, TokenCounter } from '@elfenlabs/cog'
+import type { Context } from '@elfenlabs/cog'
+
+class SummarizingStrategy implements EvictionStrategy {
+  compact(ctx: Context, budgetTokens: number, tokenCounter: TokenCounter): void {
+    // Your logic: summarize old messages, evict, push summary, etc.
+  }
+}
+```
+
 ## Error Handling
 
 ```typescript
-import { MaxStepsError, AgentAbortError } from '@elfenlabs/cog'
+import { MaxStepsError, AgentAbortError, ContextBudgetError } from '@elfenlabs/cog'
 
 try {
   await runAgent({ ctx, provider, instruction: '...', tools, maxSteps: 10 })
@@ -284,6 +377,9 @@ try {
   }
   if (err instanceof AgentAbortError) {
     // AbortSignal was triggered
+  }
+  if (err instanceof ContextBudgetError) {
+    // Fixed context (system prompt + tools + pinned) exceeds maxContextTokens
   }
 }
 ```
