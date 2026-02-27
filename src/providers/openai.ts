@@ -226,9 +226,22 @@ export function createOpenAIProvider(
     async generate(params) {
       const shouldStream = !!(params.stream?.onReasoning || params.stream?.onContent)
 
+      // Convert and sanitize messages
+      const apiMessages = toAPIMessages(params.messages)
+      // Strip trailing empty assistant messages — these look like "prefill"
+      // to servers with enable_thinking, causing a 400 error.
+      while (apiMessages.length > 0) {
+        const last = apiMessages[apiMessages.length - 1]
+        if (last.role === 'assistant' && !last.content && !last.tool_calls) {
+          apiMessages.pop()
+        } else {
+          break
+        }
+      }
+
       const body: Record<string, unknown> = {
         model,
-        messages: toAPIMessages(params.messages),
+        messages: apiMessages,
         temperature,
         stream: shouldStream,
         ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
