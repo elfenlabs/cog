@@ -240,6 +240,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     // Case 1: Model returned tool calls → execute and loop
     if (result.toolCalls && result.toolCalls.length > 0) {
       endThinking()
+      endOutput()
       // Append the assistant message with tool calls to context
       ctx.push({
         role: 'assistant',
