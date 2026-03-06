@@ -1,6 +1,6 @@
 {
-  "name": "@elfenlabs/cog",
-  "version": "0.4.1",
+  "name": "@elfenlabs/nous",
+  "version": "0.1.0",
   "description": "A minimal agent SDK for TypeScript — three primitives, infinite composition",
   "type": "module",
   "main": "dist/index.js",
@@ -34,11 +34,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/elfenlabs/cog.git"
+    "url": "git+https://github.com/elfenlabs/nous.git"
   },
-  "homepage": "https://github.com/elfenlabs/cog#readme",
+  "homepage": "https://github.com/elfenlabs/nous#readme",
   "bugs": {
-    "url": "https://github.com/elfenlabs/cog/issues"
+    "url": "https://github.com/elfenlabs/nous/issues"
   },
   "devDependencies": {
     "@types/bun": "^1.3.9",

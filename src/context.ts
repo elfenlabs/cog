@@ -1,5 +1,5 @@
 /**
- * Cog v2 — Context
+ * Nous — Context
  *
  * Append-only message chain. Push messages in, serialize out.
  */

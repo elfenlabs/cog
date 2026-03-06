@@ -1,5 +1,5 @@
 /**
- * Cog v2 — Tool
+ * Nous — Tool
  *
  * A tool is a schema + execute function. Everything is a tool.
  */

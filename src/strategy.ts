@@ -1,5 +1,5 @@
 /**
- * Cog v2 — Eviction Strategies
+ * Nous — Eviction Strategies
  *
  * Context is pure data. Strategies operate ON the context externally.
  * This separation lets different callers use different strategies

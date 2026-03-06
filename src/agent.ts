@@ -1,5 +1,5 @@
 /**
- * Cog v2 — Agent Loop
+ * Nous — Agent Loop
  *
  * The heart of the library. Calls the model in a loop,
  * executing tool calls until the model responds with text only.

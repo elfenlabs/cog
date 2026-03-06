@@ -1,5 +1,5 @@
 /**
- * Cog — OpenAI-compatible Provider
+ * Nous — OpenAI-compatible Provider
  *
  * Works with OpenAI, vLLM, OpenRouter, and any OpenAI-compatible API.
  * Supports streaming (SSE) with reasoning_content extraction.
@@ -18,7 +18,7 @@ export type OpenAIProviderOptions = {
 
 // ── Message Conversion ──────────────────────────────────────────────────────
 
-/** Convert internal Cog messages to OpenAI API wire format */
+/** Convert internal Nous messages to OpenAI API wire format */
 function toAPIMessages(messages: Message[]) {
   return messages.map(m => {
     const msg: Record<string, unknown> = { role: m.role, content: m.content }
@@ -63,7 +63,7 @@ function toJSONSchema(param: ToolParameter): Record<string, unknown> {
   return schema
 }
 
-/** Convert internal Cog tool specs to OpenAI function-calling format */
+/** Convert internal Nous tool specs to OpenAI function-calling format */
 function toAPITools(tools: ToolSpec[]) {
   return tools.map(t => ({
     type: 'function' as const,

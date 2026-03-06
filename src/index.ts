@@ -1,5 +1,5 @@
 /**
- * Cog v2 — A minimal agent SDK for TypeScript
+ * Nous — A minimal agent SDK for TypeScript
  *
  * Three primitives, infinite composition.
  */

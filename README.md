@@ -1,15 +1,15 @@
-# 🧠 Cog
+# 🧠 Nous
 
 A minimal agent SDK for TypeScript. Three primitives, zero opinions on your LLM provider.
 
 ```
-npm install @elfenlabs/cog
+npm install @elfenlabs/nous
 ```
 
 ## Quick Start
 
 ```typescript
-import { createContext, createTool, createOpenAIProvider, runAgent } from '@elfenlabs/cog'
+import { createContext, createTool, createOpenAIProvider, runAgent } from '@elfenlabs/nous'
 
 // Define a tool
 const getWeather = createTool({
@@ -58,7 +58,7 @@ console.log(result.usage)    // { promptTokens, completionTokens, totalTokens }
 An ordered `Message[]` chain. Push strings (become `user` messages) or full `Message` objects.
 
 ```typescript
-import { createContext } from '@elfenlabs/cog'
+import { createContext } from '@elfenlabs/nous'
 
 const ctx = createContext()
 
@@ -94,7 +94,7 @@ type Message = {
 A tool is an `id`, a `description`, a `schema`, and an `execute` function.
 
 ```typescript
-import { createTool } from '@elfenlabs/cog'
+import { createTool } from '@elfenlabs/nous'
 
 const calculator = createTool({
   id: 'calculator',
@@ -130,7 +130,7 @@ type ToolParameter = {
 `runAgent` calls the provider in a loop, executing tool calls until the model responds with text only.
 
 ```typescript
-import { runAgent } from '@elfenlabs/cog'
+import { runAgent } from '@elfenlabs/nous'
 
 const result = await runAgent({
   ctx,                    // Context — the conversation so far
@@ -216,7 +216,7 @@ type StreamCallbacks = {
 Works with OpenAI, vLLM, OpenRouter, Ollama, LiteLLM, and any OpenAI-compatible API. Supports streaming (SSE) with reasoning model support (`reasoning_content`).
 
 ```typescript
-import { createOpenAIProvider } from '@elfenlabs/cog'
+import { createOpenAIProvider } from '@elfenlabs/nous'
 
 // OpenAI
 const openai = createOpenAIProvider('https://api.openai.com', 'gpt-4o', {
@@ -282,14 +282,14 @@ const result = await runAgent({
 
 ## Context Window Management
 
-LLM APIs have context limits. When the conversation exceeds the limit, some providers return a 400 error — others **silently truncate from the beginning**, evicting your system prompt first. Cog prevents this with automatic compaction.
+LLM APIs have context limits. When the conversation exceeds the limit, some providers return a 400 error — others **silently truncate from the beginning**, evicting your system prompt first. Nous prevents this with automatic compaction.
 
 ### Automatic Compaction
 
-Pass an `evictionStrategy` to `runAgent` and Cog will compact the context before every `generate()` call:
+Pass an `evictionStrategy` to `runAgent` and Nous will compact the context before every `generate()` call:
 
 ```typescript
-import { runAgent, SlidingWindowStrategy } from '@elfenlabs/cog'
+import { runAgent, SlidingWindowStrategy } from '@elfenlabs/nous'
 
 const result = await runAgent({
   ctx,
@@ -340,7 +340,7 @@ const result = await runAgent({
 Strategies can also be called directly — by the host app, a tool, or any caller:
 
 ```typescript
-import { SlidingWindowStrategy } from '@elfenlabs/cog'
+import { SlidingWindowStrategy } from '@elfenlabs/nous'
 
 const strategy = new SlidingWindowStrategy()
 const tokenCounter = (text: string) => text.length / 4
@@ -354,8 +354,8 @@ strategy.compact(ctx, maxTokens * 0.5, tokenCounter)
 Implement the `EvictionStrategy` interface for custom behavior:
 
 ```typescript
-import type { EvictionStrategy, TokenCounter } from '@elfenlabs/cog'
-import type { Context } from '@elfenlabs/cog'
+import type { EvictionStrategy, TokenCounter } from '@elfenlabs/nous'
+import type { Context } from '@elfenlabs/nous'
 
 class SummarizingStrategy implements EvictionStrategy {
   compact(ctx: Context, budgetTokens: number, tokenCounter: TokenCounter): void {
@@ -367,7 +367,7 @@ class SummarizingStrategy implements EvictionStrategy {
 ## Error Handling
 
 ```typescript
-import { MaxStepsError, AgentAbortError, ContextBudgetError } from '@elfenlabs/cog'
+import { MaxStepsError, AgentAbortError, ContextBudgetError } from '@elfenlabs/nous'
 
 try {
   await runAgent({ ctx, provider, instruction: '...', tools, maxSteps: 10 })
