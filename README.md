@@ -184,6 +184,24 @@ result.usage     // { promptTokens, completionTokens, totalTokens }
 └─────────────────────────────────────────────┘
 ```
 
+Each iteration, the provider returns a `GenerateResult` with optional `content`, `reasoning`, and `toolCalls`. The agent evaluates them in priority order:
+
+**Case 1 — Tool Calls:** The model returned `toolCalls` (content and reasoning may also be present). The agent pushes the assistant message to context, then executes each tool call. Within this case, each individual call is handled as one of:
+
+- **Parse error** — model produced invalid JSON arguments → push an error result asking the model to retry
+- **Unknown tool** — model hallucinated a tool name → push an error result
+- **Blocked** — `onBeforeToolCall` hook returned `false` → push a "blocked" result
+- **Success** — run `tool.execute()`, truncate output to `maxOutputChars`, push result
+- **Exception** — tool threw an error → catch it, push the error message as result
+
+After all tool calls are processed, the loop **continues** back to the provider.
+
+**Case 2 — Content only:** The model returned `content` with no tool calls. This is the **only case that exits the loop**. The agent pushes the final assistant message and returns `AgentResult`.
+
+**Case 3 — Reasoning only:** The model returned only `reasoning` (a think block) with no content or tool calls. This happens with reasoning models that sometimes emit a think step before acting. The agent pushes an assistant message with empty content and loops again.
+
+**Case 4 — Empty response:** No content, reasoning, or tool calls. The agent throws an error.
+
 ## Provider
 
 The `Provider` interface is a single method. Implement it for any LLM backend.
