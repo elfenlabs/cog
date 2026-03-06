@@ -1,6 +1,6 @@
 # 🧠 Nous
 
-A minimal agent SDK for TypeScript. Three primitives, zero opinions on your LLM provider.
+A minimal agent SDK for TypeScript. Four primitives, zero opinions on your LLM provider.
 
 ```
 npm install @elfenlabs/nous
@@ -51,6 +51,7 @@ console.log(result.usage)    // { promptTokens, completionTokens, totalTokens }
 |---|---|
 | **Context** | Append-only message chain. You push messages in, the agent loop reads them out. |
 | **Tool** | Schema + execute function. The agent calls tools automatically based on model output. |
+| **Provider** | LLM backend interface. A single `generate()` method — implement it for any API. |
 | **Agent** | The loop. Calls the provider, executes tool calls, repeats until the model responds with text. |
 
 ## Context
@@ -74,6 +75,12 @@ ctx.messages // readonly Message[]
 // Serialize / restore
 const snapshot = ctx.serialize()
 const restored = createContext({ from: snapshot })
+
+// Fork — zero-copy child context (see Sub-Agent Composition)
+const child = ctx.fork()
+child.push('This message only exists in the child')
+child.messages  // [...parent messages, child messages]
+ctx.messages    // unchanged — parent is not affected
 ```
 
 ### Message Shape
@@ -125,6 +132,31 @@ type ToolParameter = {
 }
 ```
 
+### Output Truncation
+
+Tool results are truncated to prevent context blowup. Set a default limit on the agent, or override per-tool:
+
+```typescript
+const result = await runAgent({
+  ctx,
+  provider,
+  instruction: '...',
+  tools: [myTool],
+  defaultMaxOutputChars: 10_000,  // default limit for all tools
+})
+
+// Per-tool override
+const bigOutputTool = createTool({
+  id: 'read_file',
+  description: 'Read a file',
+  schema: { path: { type: 'string', description: 'File path' } },
+  maxOutputChars: 50_000,  // this tool gets a larger limit
+  execute: async (args) => fs.readFileSync((args as { path: string }).path, 'utf8'),
+})
+```
+
+Priority: per-tool `maxOutputChars` > agent `defaultMaxOutputChars` > built-in default (10,000 chars).
+
 ## Agent Loop
 
 `runAgent` calls the provider in a loop, executing tool calls until the model responds with text only.
@@ -166,6 +198,27 @@ result.response  // final text response
 result.steps     // number of provider calls made
 result.usage     // { promptTokens, completionTokens, totalTokens }
 ```
+
+### Streaming
+
+The streaming callbacks follow a lifecycle: `onThinkingStart` → `onThinking` (repeated) → `onThinkingEnd` → `onOutputStart` → `onOutput` (repeated) → `onOutputEnd`. Transitions are managed automatically — thinking ends when content begins.
+
+```typescript
+const result = await runAgent({
+  ctx,
+  provider,
+  instruction: 'You are a helpful assistant.',
+  tools,
+  onThinkingStart: () => process.stdout.write('\x1b[2m'),  // dim
+  onThinking: (chunk) => process.stdout.write(chunk),
+  onThinkingEnd: () => process.stdout.write('\x1b[0m\n'),  // reset
+  onOutputStart: () => {},
+  onOutput: (chunk) => process.stdout.write(chunk),
+  onOutputEnd: () => process.stdout.write('\n'),
+})
+```
+
+Streaming callbacks fire during each provider call. When the model makes tool calls, `onOutputEnd` fires before tool execution, and new `onOutputStart`/`onOutput` events fire on the next iteration.
 
 ### How the Loop Works
 
@@ -253,7 +306,11 @@ const openrouter = createOpenAIProvider('https://openrouter.ai/api', 'anthropic/
 
 ## Sub-Agent Composition
 
-Agents are just functions. Wrap `runAgent` inside a tool to create sub-agents with isolated context.
+Agents are just functions. Wrap `runAgent` inside a tool to create sub-agents.
+
+### Isolated Context
+
+Use `createContext()` when the sub-agent doesn't need the parent conversation. Only the final answer bubbles up — no internal noise leaks into the parent.
 
 ```typescript
 const searchOrders = createTool({
@@ -284,17 +341,41 @@ const searchOrders = createTool({
       maxSteps: 20,
     })
 
-    // Only the final answer bubbles up — no pagination noise in parent context
     return result.response
   },
 })
+```
 
-// Parent agent uses the sub-agent as a regular tool
-const result = await runAgent({
-  ctx: createContext(),
-  provider,
-  instruction: 'Use search_orders to look up order information.',
-  tools: [searchOrders],
+### Forked Context
+
+Use `ctx.fork()` when the sub-agent needs the full parent conversation to do its job. The child sees all parent messages as a read-only prefix and appends only to its own array — tool call noise stays in the fork.
+
+```typescript
+const deepAnalysis = createTool({
+  id: 'deep_analysis',
+  description: 'Perform deep analysis using the full conversation context',
+  schema: {
+    focus: { type: 'string', description: 'What aspect to analyze' },
+  },
+  execute: async (args, ctx) => {
+    const { focus } = args as { focus: string }
+
+    // Fork inherits the entire parent conversation (zero-copy)
+    const forkedCtx = ctx.fork()
+    forkedCtx.push(`Analyze the conversation so far, focusing on: ${focus}`)
+
+    const result = await runAgent({
+      ctx: forkedCtx,
+      provider,
+      instruction: 'You are an analyst. Use the conversation history to provide insights.',
+      tools: [searchDatabase, runQuery],
+      maxSteps: 15,
+    })
+
+    // Sub-agent's tool calls and intermediate steps stay in the fork
+    // Only the final answer returns to the parent
+    return result.response
+  },
 })
 ```
 
@@ -384,6 +465,10 @@ class SummarizingStrategy implements EvictionStrategy {
 
 ## Error Handling
 
+### Thrown Errors
+
+These errors propagate to the caller and must be caught:
+
 ```typescript
 import { MaxStepsError, AgentAbortError, ContextBudgetError } from '@elfenlabs/nous'
 
@@ -402,7 +487,16 @@ try {
 }
 ```
 
-Unknown tool calls and tool execution errors are automatically caught and fed back to the model as `tool` messages, letting it recover gracefully.
+### Auto-Recovery
+
+These errors are handled internally — the agent feeds them back to the model as `tool` role messages, giving the model a chance to self-correct:
+
+- **Unknown tool** — model called a tool that doesn't exist (e.g., hallucinated name)
+- **Malformed arguments** — model produced invalid JSON for tool arguments
+- **Tool exception** — `tool.execute()` threw an error
+- **Blocked call** — `onBeforeToolCall` hook returned `false`
+
+The model sees the error in its context and can retry with corrected arguments, use a different tool, or respond with text instead. This keeps the agent loop resilient without requiring manual error handling for common LLM mistakes.
 
 ## License
 
