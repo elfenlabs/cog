@@ -10,6 +10,8 @@ import type { Tool } from './tool.js'
 import type { EvictionStrategy, TokenCounter } from './strategy.js'
 import { defaultTokenCounter } from './strategy.js'
 import type { Message, Provider, ToolSpec, StreamCallbacks, Usage } from './types.js'
+import { AgentRunHandle } from './handle.js'
+import type { ActiveToolCall } from './handle.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -114,9 +116,85 @@ function calculateFixedCost(
   return cost
 }
 
+// ── Single Tool Execution ───────────────────────────────────────────────────
+
+type ToolCallResult = {
+  toolCallId: string
+  content: string
+  rawResult?: unknown
+  tool?: Tool<any>
+  args?: Record<string, unknown>
+}
+
+async function executeSingleTool(
+  call: { id: string; name: string; arguments: Record<string, unknown>; parseError?: string },
+  toolMap: Map<string, Tool<any>>,
+  ctx: Context,
+  limit: number,
+  onBeforeToolCall?: AgentConfig['onBeforeToolCall'],
+): Promise<ToolCallResult> {
+  // Handle malformed tool call arguments from model
+  if (call.parseError) {
+    return {
+      toolCallId: call.id,
+      content: `Error: ${call.parseError}. Please retry with valid JSON arguments.`,
+    }
+  }
+
+  const tool = toolMap.get(call.name)
+  if (!tool) {
+    return {
+      toolCallId: call.id,
+      content: `Error: unknown tool "${call.name}"`,
+    }
+  }
+
+  // Hook: before
+  if (onBeforeToolCall) {
+    const allowed = await onBeforeToolCall(tool, call.arguments)
+    if (allowed === false) {
+      return {
+        toolCallId: call.id,
+        content: 'Error: tool call was blocked',
+        tool,
+        args: call.arguments,
+      }
+    }
+  }
+
+  // Execute the tool
+  const toolLimit = tool.maxOutputChars ?? limit
+  try {
+    const toolResult = await tool.execute(call.arguments as any, ctx)
+    const content =
+      typeof toolResult === 'string'
+        ? toolResult
+        : JSON.stringify(toolResult)
+
+    return {
+      toolCallId: call.id,
+      content: truncate(content, toolLimit),
+      rawResult: toolResult,
+      tool,
+      args: call.arguments,
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return {
+      toolCallId: call.id,
+      content: truncate(`Error: ${message}`, toolLimit),
+      tool,
+      args: call.arguments,
+    }
+  }
+}
+
 // ── Agent Loop ──────────────────────────────────────────────────────────────
 
-export async function runAgent(config: AgentConfig): Promise<AgentResult> {
+async function executeLoop(
+  config: AgentConfig,
+  handle: AgentRunHandle,
+): Promise<AgentResult> {
   const {
     ctx,
     provider,
@@ -145,6 +223,7 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
   let isThinking = false
   let isOutputting = false
   const totalUsage: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  const outputLimit = defaultMaxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS
 
   /** End reasoning block if one is active */
   const endThinking = () => {
@@ -162,185 +241,182 @@ export async function runAgent(config: AgentConfig): Promise<AgentResult> {
     }
   }
 
-  while (true) {
-    // Check abort
-    if (signal?.aborted) {
-      throw new AgentAbortError()
-    }
-
-    // Check step limit
-    if (steps >= maxSteps) {
-      throw new MaxStepsError(maxSteps)
-    }
-
-    // Compact context if strategy is configured
-    if (evictionStrategy) {
-      const fixedCost = calculateFixedCost(instruction, toolSpecs, ctx, tokenCounter)
-      const budget = maxContextTokens - fixedCost
-      if (budget <= 0) {
-        throw new ContextBudgetError(fixedCost, maxContextTokens)
+  try {
+    while (true) {
+      // Check abort
+      if (signal?.aborted) {
+        throw new AgentAbortError()
       }
-      evictionStrategy.compact(ctx, budget, tokenCounter)
-    }
 
-    // Build messages: instruction as system prompt + context messages
-    const messages: Message[] = [
-      { role: 'system', content: instruction },
-      ...ctx.messages,
-    ]
+      // Check step limit
+      if (steps >= maxSteps) {
+        throw new MaxStepsError(maxSteps)
+      }
 
-    // Build stream callbacks for the provider
-    // Wrap onThinking to manage start/end lifecycle
-    const wrappedOnThinking = onThinking
-      ? (chunk: string) => {
-          if (!isThinking) {
-            isThinking = true
-            onThinkingStart?.()
-          }
-          onThinking(chunk)
+      // Transition: thinking
+      handle._transition('thinking', steps)
+
+      // Compact context if strategy is configured
+      if (evictionStrategy) {
+        const fixedCost = calculateFixedCost(instruction, toolSpecs, ctx, tokenCounter)
+        const budget = maxContextTokens - fixedCost
+        if (budget <= 0) {
+          throw new ContextBudgetError(fixedCost, maxContextTokens)
         }
-      : undefined
+        evictionStrategy.compact(ctx, budget, tokenCounter)
+      }
 
-    const wrappedOnOutput = onOutput
-      ? (chunk: string) => {
-          if (!isOutputting) {
-            isOutputting = true
-            endThinking()
-            onOutputStart?.()
-          }
-          onOutput(chunk)
-        }
-      : undefined
+      // Build messages: instruction as system prompt + context messages
+      const messages: Message[] = [
+        { role: 'system', content: instruction },
+        ...ctx.messages,
+      ]
 
-    const stream: StreamCallbacks | undefined =
-      wrappedOnThinking || wrappedOnOutput
-        ? {
-            onReasoning: wrappedOnThinking,
-            onContent: wrappedOnOutput,
+      // Build stream callbacks for the provider
+      const wrappedOnThinking = onThinking
+        ? (chunk: string) => {
+            if (!isThinking) {
+              isThinking = true
+              onThinkingStart?.()
+            }
+            onThinking(chunk)
           }
         : undefined
 
-    // Call the provider
-    const result = await provider.generate({
-      messages,
-      tools: toolSpecs.length > 0 ? toolSpecs : undefined,
-      signal,
-      stream,
-    })
+      const wrappedOnOutput = onOutput
+        ? (chunk: string) => {
+            if (!isOutputting) {
+              isOutputting = true
+              endThinking()
+              onOutputStart?.()
+            }
+            onOutput(chunk)
+          }
+        : undefined
 
-    steps++
+      const stream: StreamCallbacks | undefined =
+        wrappedOnThinking || wrappedOnOutput
+          ? {
+              onReasoning: wrappedOnThinking,
+              onContent: wrappedOnOutput,
+            }
+          : undefined
 
-    // Accumulate token usage
-    if (result.usage) {
-      totalUsage.promptTokens += result.usage.promptTokens
-      totalUsage.completionTokens += result.usage.completionTokens
-      totalUsage.totalTokens += result.usage.totalTokens
-    }
-
-    // Case 1: Model returned tool calls → execute and loop
-    if (result.toolCalls && result.toolCalls.length > 0) {
-      endThinking()
-      endOutput()
-      // Append the assistant message with tool calls to context
-      ctx.push({
-        role: 'assistant',
-        content: result.content ?? '',
-        reasoning: result.reasoning,
-        toolCalls: result.toolCalls,
+      // Call the provider
+      const result = await provider.generate({
+        messages,
+        tools: toolSpecs.length > 0 ? toolSpecs : undefined,
+        signal,
+        stream,
       })
 
-      for (const call of result.toolCalls) {
-        // Handle malformed tool call arguments from model
-        if (call.parseError) {
-          ctx.push({
-            role: 'tool',
-            content: `Error: ${call.parseError}. Please retry with valid JSON arguments.`,
-            toolCallId: call.id,
-          })
-          continue
-        }
+      steps++
 
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          // Unknown tool — append error as tool result so model can recover
-          ctx.push({
-            role: 'tool',
-            content: `Error: unknown tool "${call.name}"`,
-            toolCallId: call.id,
-          })
-          continue
-        }
-
-        // Hook: before
-        if (onBeforeToolCall) {
-          const allowed = await onBeforeToolCall(tool, call.arguments)
-          if (allowed === false) {
-            ctx.push({
-              role: 'tool',
-              content: 'Error: tool call was blocked',
-              toolCallId: call.id,
-            })
-            continue
-          }
-        }
-
-        // Execute the tool
-        const limit = tool.maxOutputChars ?? defaultMaxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS
-        try {
-          const toolResult = await tool.execute(call.arguments as any, ctx)
-          const content =
-            typeof toolResult === 'string'
-              ? toolResult
-              : JSON.stringify(toolResult)
-
-          ctx.push({
-            role: 'tool',
-            content: truncate(content, limit),
-            toolCallId: call.id,
-          })
-
-          // Hook: after (receives raw, untruncated result)
-          if (onAfterToolCall) {
-            onAfterToolCall(tool, call.arguments, toolResult)
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
-          ctx.push({
-            role: 'tool',
-            content: truncate(`Error: ${message}`, limit),
-            toolCallId: call.id,
-          })
-        }
+      // Accumulate token usage
+      if (result.usage) {
+        totalUsage.promptTokens += result.usage.promptTokens
+        totalUsage.completionTokens += result.usage.completionTokens
+        totalUsage.totalTokens += result.usage.totalTokens
       }
 
-      // Continue the loop
-      continue
-    }
+      // Case 1: Model returned tool calls → execute in parallel and loop
+      if (result.toolCalls && result.toolCalls.length > 0) {
+        endThinking()
+        endOutput()
 
-    // Case 2: Model returned text only → done
-    if (result.content) {
-      endThinking()
-      endOutput()
-      ctx.push({
-        role: 'assistant',
-        content: result.content,
-        reasoning: result.reasoning,
-      })
-      return { response: result.content, steps, usage: totalUsage }
-    }
+        // Transition: tool_call
+        handle._transition('tool_call', steps)
 
-    // Case 3: Reasoning only (no content, no tool calls) — continue loop
-    // Reasoning models sometimes produce a think step before acting.
-    if (result.reasoning) {
-      ctx.push({
-        role: 'assistant',
-        content: '',
-        reasoning: result.reasoning,
-      })
-      continue
-    }
+        // Append the assistant message with tool calls to context
+        ctx.push({
+          role: 'assistant',
+          content: result.content ?? '',
+          reasoning: result.reasoning,
+          toolCalls: result.toolCalls,
+        })
 
-    // Case 4: Nothing at all — error
-    throw new Error('Provider returned neither content nor tool calls')
+        // Register active tool calls on the handle
+        handle._setActiveToolCalls(
+          result.toolCalls.map(call => ({
+            id: call.id,
+            toolId: call.name,
+            args: call.arguments,
+            startedAt: new Date(),
+          })),
+        )
+
+        // Execute all tool calls in parallel
+        const toolResults = await Promise.allSettled(
+          result.toolCalls.map(call =>
+            executeSingleTool(call, toolMap, ctx, outputLimit, onBeforeToolCall),
+          ),
+        )
+
+        // Clear active tool calls
+        handle._clearActiveToolCalls()
+
+        // Push all results into context
+        for (const settled of toolResults) {
+          if (settled.status === 'fulfilled') {
+            const tr = settled.value
+            ctx.push({
+              role: 'tool',
+              content: tr.content,
+              toolCallId: tr.toolCallId,
+            })
+
+            // Hook: after (only for successful executions with a raw result)
+            if (onAfterToolCall && tr.rawResult !== undefined && tr.tool) {
+              onAfterToolCall(tr.tool, tr.args!, tr.rawResult)
+            }
+          } else {
+            // Unexpected rejection — should not happen since executeSingleTool catches errors
+            ctx.push({
+              role: 'tool',
+              content: `Error: ${settled.reason}`,
+              toolCallId: 'unknown',
+            })
+          }
+        }
+
+        // Continue the loop
+        continue
+      }
+
+      // Case 2: Model returned text only → done
+      if (result.content) {
+        endThinking()
+        endOutput()
+        ctx.push({
+          role: 'assistant',
+          content: result.content,
+          reasoning: result.reasoning,
+        })
+        handle._transition('done', steps)
+        return { response: result.content, steps, usage: totalUsage }
+      }
+
+      // Case 3: Reasoning only (no content, no tool calls) — continue loop
+      if (result.reasoning) {
+        ctx.push({
+          role: 'assistant',
+          content: '',
+          reasoning: result.reasoning,
+        })
+        continue
+      }
+
+      // Case 4: Nothing at all — error
+      throw new Error('Provider returned neither content nor tool calls')
+    }
+  } catch (err) {
+    handle._transition('error', steps)
+    throw err
   }
+}
+
+export function runAgent(config: AgentConfig): AgentRunHandle {
+  const handle = new AgentRunHandle()
+  handle._start(() => executeLoop(config, handle))
+  return handle
 }

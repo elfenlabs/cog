@@ -169,14 +169,15 @@ describe('runAgent', () => {
     ctx.push('Go')
 
     await assert.rejects(
-      () =>
-        runAgent({
+      async () => {
+        await runAgent({
           ctx,
           provider,
           instruction: 'Loop',
           tools: [tool],
           maxSteps: 3,
-        }),
+        })
+      },
       MaxStepsError,
     )
   })
@@ -464,8 +465,8 @@ describe('runAgent', () => {
     const { ContextBudgetError } = await import('./agent.js')
 
     await assert.rejects(
-      () =>
-        runAgent({
+      async () => {
+        await runAgent({
           ctx,
           provider,
           instruction: 'X'.repeat(500), // 500 token instruction
@@ -473,7 +474,8 @@ describe('runAgent', () => {
           maxContextTokens: 100, // only 100 tokens budget
           evictionStrategy: new SlidingWindowStrategy(),
           tokenCounter: (text: string) => text.length,
-        }),
+        })
+      },
       ContextBudgetError,
     )
   })
@@ -523,6 +525,341 @@ describe('runAgent', () => {
     assert.equal(result.response, 'Done.')
     // All 10 user messages + 1 assistant response = 11
     assert.equal(ctx.messages.length, 11)
+  })
+})
+
+// ── AgentRunHandle Tests ────────────────────────────────────────────────────
+
+describe('AgentRunHandle', () => {
+  it('status() reflects done state after completion', async () => {
+    const provider = mockProvider([
+      { content: 'Hello!' },
+    ])
+    const ctx = createContext()
+    ctx.push('Hi')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Be helpful',
+      tools: [],
+    })
+
+    await run
+    const s = run.status()
+    assert.equal(s.state, 'done')
+    assert.equal(s.step, 1)
+    assert.deepEqual(s.activeToolCalls, [])
+  })
+
+  it('status() reflects error state after failure', async () => {
+    const provider = mockProvider(
+      Array.from({ length: 10 }, () => ({
+        toolCalls: [{ id: 'c', name: 'noop', arguments: {} }],
+      })),
+    )
+
+    const tool = createTool({
+      id: 'noop',
+      description: 'No-op',
+      execute: async () => null,
+    })
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Loop',
+      tools: [tool],
+      maxSteps: 3,
+    })
+
+    try {
+      await run
+    } catch {
+      // expected
+    }
+
+    assert.equal(run.status().state, 'error')
+  })
+
+  it('status() shows correct step count', async () => {
+    let callCount = 0
+    const tool = createTool({
+      id: 'step',
+      description: 'Do a step',
+      execute: async () => {
+        callCount++
+        return `step ${callCount}`
+      },
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'c1', name: 'step', arguments: {} }] },
+      { toolCalls: [{ id: 'c2', name: 'step', arguments: {} }] },
+      { content: 'All done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Run steps',
+      tools: [tool],
+    })
+
+    const result = await run
+    assert.equal(result.steps, 3)
+    assert.equal(run.status().step, 3)
+    assert.equal(run.status().state, 'done')
+  })
+
+  it('onChange fires on state transitions', async () => {
+    const tool = createTool({
+      id: 'echo',
+      description: 'Echo',
+      execute: async () => 'echoed',
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }] },
+      { content: 'Done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Echo',
+      tools: [tool],
+    })
+
+    const states: string[] = []
+    run.onChange((status) => {
+      states.push(status.state)
+    })
+
+    await run
+
+    // Should see: thinking(0) → tool_call(1) → activeToolCalls set → activeToolCalls clear → thinking(1) → done(2)
+    assert.ok(states.includes('thinking'))
+    assert.ok(states.includes('tool_call'))
+    assert.ok(states.includes('done'))
+  })
+
+  it('onChange unsubscribe stops callbacks', async () => {
+    const provider = mockProvider([
+      { content: 'Hello!' },
+    ])
+    const ctx = createContext()
+    ctx.push('Hi')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Be helpful',
+      tools: [],
+    })
+
+    let callCount = 0
+    const unsub = run.onChange(() => {
+      callCount++
+    })
+
+    // Unsubscribe immediately
+    unsub()
+
+    await run
+    assert.equal(callCount, 0)
+  })
+
+  it('activeToolCalls populated during tool_call state', async () => {
+    const tool = createTool({
+      id: 'slow_tool',
+      description: 'A slow tool',
+      execute: async () => 'done',
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'call-1', name: 'slow_tool', arguments: { key: 'value' } }] },
+      { content: 'Done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [tool],
+    })
+
+    let capturedToolCalls: any[] = []
+    run.onChange((status) => {
+      if (status.activeToolCalls.length > 0) {
+        capturedToolCalls = status.activeToolCalls
+      }
+    })
+
+    await run
+
+    assert.equal(capturedToolCalls.length, 1)
+    assert.equal(capturedToolCalls[0]!.id, 'call-1')
+    assert.equal(capturedToolCalls[0]!.toolId, 'slow_tool')
+    assert.deepEqual(capturedToolCalls[0]!.args, { key: 'value' })
+    assert.ok(capturedToolCalls[0]!.startedAt instanceof Date)
+  })
+
+  it('parallel tool execution runs all tools and collects results', async () => {
+    const executionOrder: string[] = []
+
+    const toolA = createTool({
+      id: 'tool_a',
+      description: 'Tool A',
+      execute: async () => {
+        executionOrder.push('a_start')
+        executionOrder.push('a_end')
+        return 'result_a'
+      },
+    })
+
+    const toolB = createTool({
+      id: 'tool_b',
+      description: 'Tool B',
+      execute: async () => {
+        executionOrder.push('b_start')
+        executionOrder.push('b_end')
+        return 'result_b'
+      },
+    })
+
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'tool_a', arguments: {} },
+          { id: 'c2', name: 'tool_b', arguments: {} },
+        ],
+      },
+      { content: 'Both done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [toolA, toolB],
+    })
+
+    assert.equal(result.response, 'Both done.')
+
+    // Both tools executed
+    assert.ok(executionOrder.includes('a_start'))
+    assert.ok(executionOrder.includes('b_start'))
+
+    // Both tool results in context
+    const toolMsgs = ctx.messages.filter(m => m.role === 'tool')
+    assert.equal(toolMsgs.length, 2)
+    assert.equal(toolMsgs[0]!.toolCallId, 'c1')
+    assert.equal(toolMsgs[1]!.toolCallId, 'c2')
+  })
+
+  it('parallel tool execution handles mixed success/failure', async () => {
+    const goodTool = createTool({
+      id: 'good',
+      description: 'Works fine',
+      execute: async () => 'success',
+    })
+
+    const badTool = createTool({
+      id: 'bad',
+      description: 'Always fails',
+      execute: async () => {
+        throw new Error('Kaboom!')
+      },
+    })
+
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'good', arguments: {} },
+          { id: 'c2', name: 'bad', arguments: {} },
+        ],
+      },
+      { content: 'Recovered.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [goodTool, badTool],
+    })
+
+    assert.equal(result.response, 'Recovered.')
+
+    const toolMsgs = ctx.messages.filter(m => m.role === 'tool')
+    assert.equal(toolMsgs.length, 2)
+    assert.ok(toolMsgs[0]!.content.includes('success'))
+    assert.ok(toolMsgs[1]!.content.includes('Kaboom!'))
+  })
+
+  it('multiple activeToolCalls shown for parallel execution', async () => {
+    const toolA = createTool({
+      id: 'alpha',
+      description: 'Alpha',
+      execute: async () => 'a',
+    })
+
+    const toolB = createTool({
+      id: 'beta',
+      description: 'Beta',
+      execute: async () => 'b',
+    })
+
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'alpha', arguments: { x: 1 } },
+          { id: 'c2', name: 'beta', arguments: { y: 2 } },
+        ],
+      },
+      { content: 'Done.' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const run = runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [toolA, toolB],
+    })
+
+    let maxActiveToolCalls = 0
+    run.onChange((status) => {
+      if (status.activeToolCalls.length > maxActiveToolCalls) {
+        maxActiveToolCalls = status.activeToolCalls.length
+      }
+    })
+
+    await run
+
+    // Both tool calls should have been registered simultaneously
+    assert.equal(maxActiveToolCalls, 2)
   })
 })
 
