@@ -279,24 +279,24 @@ async function executeLoop(
       ]
 
       // Build stream callbacks for the provider
-      const wrappedOnThinking = onThinking
+      const wrappedOnThinking = (onThinking || onThinkingStart || onThinkingEnd)
         ? (chunk: string) => {
             if (!isThinking) {
               isThinking = true
               onThinkingStart?.()
             }
-            onThinking(chunk)
+            onThinking?.(chunk)
           }
         : undefined
 
-      const wrappedOnOutput = onOutput
+      const wrappedOnOutput = (onOutput || onOutputStart || onOutputEnd)
         ? (chunk: string) => {
             if (!isOutputting) {
               isOutputting = true
               endThinking()
               onOutputStart?.()
             }
-            onOutput(chunk)
+            onOutput?.(chunk)
           }
         : undefined
 
