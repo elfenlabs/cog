@@ -67,6 +67,10 @@ export type GenerateResult = {
 export type StreamCallbacks = {
   onReasoning?: (chunk: string) => void
   onContent?: (chunk: string) => void
+  /** Fires once when a new tool call index first appears in the stream */
+  onToolCallStart?: (index: number, id: string, name: string) => void
+  /** Fires for each argument JSON fragment on an existing tool call */
+  onToolCallDelta?: (index: number, argChunk: string) => void
 }
 
 /** LLM provider interface — user-supplied */

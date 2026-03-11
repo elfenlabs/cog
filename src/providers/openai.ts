@@ -166,12 +166,18 @@ async function readSSEStream(
         for (const tc of delta.tool_calls) {
           const idx = tc.index ?? 0
           if (!toolCallsMap.has(idx)) {
-            toolCallsMap.set(idx, { id: tc.id ?? '', name: '', args: '' })
+            const name = tc.function?.name ?? ''
+            toolCallsMap.set(idx, { id: tc.id ?? '', name, args: '' })
+            stream?.onToolCallStart?.(idx, tc.id ?? '', name)
+          } else {
+            if (tc.function?.name) toolCallsMap.get(idx)!.name += tc.function.name
           }
           const entry = toolCallsMap.get(idx)!
-          if (tc.id) entry.id = tc.id
-          if (tc.function?.name) entry.name += tc.function.name
-          if (tc.function?.arguments) entry.args += tc.function.arguments
+          if (tc.id && !entry.id) entry.id = tc.id
+          if (tc.function?.arguments) {
+            entry.args += tc.function.arguments
+            stream?.onToolCallDelta?.(idx, tc.function.arguments)
+          }
         }
       }
     }
@@ -224,7 +230,12 @@ export function createOpenAIProvider(
 
   return {
     async generate(params) {
-      const shouldStream = !!(params.stream?.onReasoning || params.stream?.onContent)
+      const shouldStream = !!(
+        params.stream?.onReasoning ||
+        params.stream?.onContent ||
+        params.stream?.onToolCallStart ||
+        params.stream?.onToolCallDelta
+      )
 
       // Convert and sanitize messages
       const apiMessages = toAPIMessages(params.messages)

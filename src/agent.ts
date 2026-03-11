@@ -35,6 +35,10 @@ export type AgentConfig = {
   onOutputStart?: () => void
   onOutput?: (chunk: string) => void
   onOutputEnd?: () => void
+  /** Fires when the model begins streaming a tool call (name available) */
+  onToolCallStream?: (index: number, id: string, name: string) => void
+  /** Fires for each argument JSON fragment for a streamed tool call */
+  onToolCallArgumentDelta?: (index: number, argChunk: string) => void
   onBeforeToolCall?: (
     tool: Tool<any>,
     args: Record<string, unknown>,
@@ -212,6 +216,8 @@ async function executeLoop(
     onOutputStart,
     onOutput,
     onOutputEnd,
+    onToolCallStream,
+    onToolCallArgumentDelta,
     onBeforeToolCall,
     onAfterToolCall,
   } = config
@@ -295,10 +301,12 @@ async function executeLoop(
         : undefined
 
       const stream: StreamCallbacks | undefined =
-        wrappedOnThinking || wrappedOnOutput
+        wrappedOnThinking || wrappedOnOutput || onToolCallStream || onToolCallArgumentDelta
           ? {
               onReasoning: wrappedOnThinking,
               onContent: wrappedOnOutput,
+              onToolCallStart: onToolCallStream,
+              onToolCallDelta: onToolCallArgumentDelta,
             }
           : undefined
 
