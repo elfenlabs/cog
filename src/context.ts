@@ -4,7 +4,7 @@
  * Append-only message chain. Push messages in, serialize out.
  */
 
-import type { Message } from './types.js'
+import type { ContentPart, Message } from './types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -48,10 +48,13 @@ export class Context {
   /**
    * Push a message onto the chain.
    * - String → user message
+   * - ContentPart[] → user message with multi-part content
    * - Message object → stored as-is
    */
-  push(content: string | Message): void {
+  push(content: string | ContentPart[] | Message): void {
     if (typeof content === 'string') {
+      this._messages.push({ role: 'user', content })
+    } else if (Array.isArray(content)) {
       this._messages.push({ role: 'user', content })
     } else {
       this._messages.push(content)

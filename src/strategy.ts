@@ -8,6 +8,7 @@
 
 import type { Context } from './context.js'
 import type { Message } from './types.js'
+import { estimateContentTokens } from './types.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,11 +34,11 @@ export interface EvictionStrategy {
 
 /** Estimate the token cost of a single message */
 function messageTokens(msg: Message, tokenCounter: TokenCounter): number {
-  let text = msg.content
-  if (msg.reasoning) text += msg.reasoning
-  if (msg.toolCalls) text += JSON.stringify(msg.toolCalls)
-  if (msg.toolCallId) text += msg.toolCallId
-  return tokenCounter(text)
+  let tokens = estimateContentTokens(msg.content, tokenCounter)
+  if (msg.reasoning) tokens += tokenCounter(msg.reasoning)
+  if (msg.toolCalls) tokens += tokenCounter(JSON.stringify(msg.toolCalls))
+  if (msg.toolCallId) tokens += tokenCounter(msg.toolCallId)
+  return tokens
 }
 
 // ── SlidingWindowStrategy ───────────────────────────────────────────────────

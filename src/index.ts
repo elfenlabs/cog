@@ -24,6 +24,7 @@ export type { OpenAIProviderOptions } from './providers/openai.js'
 
 export type {
   Message,
+  ContentPart,
   ToolCallRequest,
   ToolParameter,
   ToolSpec,
@@ -32,4 +33,6 @@ export type {
   Provider,
   Usage,
 } from './types.js'
+
+export { contentText, estimateContentTokens } from './types.js'
 

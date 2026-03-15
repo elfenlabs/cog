@@ -228,4 +228,22 @@ describe('SlidingWindowStrategy', () => {
     strategy.compact(ctx, 10, charCounter)
     assert.equal(ctx.messages.length, 2)
   })
+
+  it('handles messages with ContentPart[] content', () => {
+    const ctx = createContext()
+    // Push a multimodal user message — image estimates to 765 tokens
+    ctx.push([
+      { type: 'text' as const, text: 'A'.repeat(100) },
+      { type: 'image_url' as const, image_url: { url: 'data:...' } },
+    ])
+    // Push a normal text message
+    ctx.push('B'.repeat(50))
+
+    // Total non-pinned: (100 text + 765 image) + 50 = 915
+    // Budget of 100 → should evict the multimodal message first (865 tokens)
+    strategy.compact(ctx, 100, charCounter)
+    assert.equal(ctx.messages.length, 1)
+    assert.equal(ctx.messages[0]!.content, 'B'.repeat(50))
+  })
 })
+

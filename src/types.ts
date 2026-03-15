@@ -13,10 +13,17 @@ export type ToolCallRequest = {
   parseError?: string
 }
 
+/** A single part of a multi-part message (OpenAI vision/audio format) */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+  | { type: 'input_audio'; input_audio: { data: string; format: 'wav' | 'mp3' } }
+  | { type: 'video_url'; video_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+
 /** A message in the context chain */
 export type Message = {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | ContentPart[]
   reasoning?: string
   toolCallId?: string
   toolCalls?: ToolCallRequest[]
@@ -81,4 +88,43 @@ export interface Provider {
     signal?: AbortSignal
     stream?: StreamCallbacks
   }): Promise<GenerateResult>
+}
+
+// ── Content Helpers ─────────────────────────────────────────────────────────
+
+/** Extract the text representation from string or ContentPart[] content */
+export function contentText(content: string | ContentPart[]): string {
+  if (typeof content === 'string') return content
+  return content
+    .filter((p): p is Extract<ContentPart, { type: 'text' }> => p.type === 'text')
+    .map(p => p.text)
+    .join('\n')
+}
+
+/**
+ * Estimate token cost of image content using OpenAI's tile formula.
+ * Without actual pixel dimensions we assume the default 4-tile case (2×2 grid).
+ *
+ * - `low`          → 85 tokens
+ * - `high`/`auto`  → 85 base + 4 tiles × 170 = 765 tokens
+ * - omitted        → treated as `high` (conservative)
+ */
+function estimateImageTokens(detail?: 'low' | 'high' | 'auto'): number {
+  if (detail === 'low') return 85
+  return 85 + 4 * 170 // 765
+}
+
+/** Estimate token cost of content (string or ContentPart[]) */
+export function estimateContentTokens(
+  content: string | ContentPart[],
+  tokenCounter: (text: string) => number,
+): number {
+  if (typeof content === 'string') return tokenCounter(content)
+  return content.reduce((sum, part) => {
+    if (part.type === 'text') return sum + tokenCounter(part.text)
+    if (part.type === 'image_url') return sum + estimateImageTokens(part.image_url.detail)
+    if (part.type === 'input_audio') return sum + Math.ceil(part.input_audio.data.length / 4)
+    if (part.type === 'video_url') return sum + 765
+    return sum
+  }, 0)
 }

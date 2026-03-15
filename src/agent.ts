@@ -10,6 +10,7 @@ import type { Tool } from './tool.js'
 import type { EvictionStrategy, TokenCounter } from './strategy.js'
 import { defaultTokenCounter } from './strategy.js'
 import type { Message, Provider, ToolSpec, StreamCallbacks, Usage } from './types.js'
+import { estimateContentTokens } from './types.js'
 import { AgentRunHandle } from './handle.js'
 import type { ActiveToolCall } from './handle.js'
 
@@ -94,11 +95,11 @@ function truncate(content: string, limit: number): string {
 
 /** Estimate token cost of a single message (content + reasoning + tool call data) */
 function messageTokenCost(msg: Message, tokenCounter: TokenCounter): number {
-  let text = msg.content
-  if (msg.reasoning) text += msg.reasoning
-  if (msg.toolCalls) text += JSON.stringify(msg.toolCalls)
-  if (msg.toolCallId) text += msg.toolCallId
-  return tokenCounter(text)
+  let tokens = estimateContentTokens(msg.content, tokenCounter)
+  if (msg.reasoning) tokens += tokenCounter(msg.reasoning)
+  if (msg.toolCalls) tokens += tokenCounter(JSON.stringify(msg.toolCalls))
+  if (msg.toolCallId) tokens += tokenCounter(msg.toolCallId)
+  return tokens
 }
 
 /** Calculate the fixed token cost (instruction + tools + pinned messages) */

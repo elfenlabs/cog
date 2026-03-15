@@ -118,4 +118,17 @@ describe('Context', () => {
     assert.equal(grandparent.messages.length, 1)
     assert.equal(parent.messages.length, 2)
   })
+
+  it('push(ContentPart[]) creates a user message with array content', () => {
+    const ctx = createContext()
+    const parts = [
+      { type: 'text' as const, text: 'What is this?' },
+      { type: 'image_url' as const, image_url: { url: 'https://example.com/img.png' } },
+    ]
+    ctx.push(parts)
+    assert.equal(ctx.messages.length, 1)
+    assert.equal(ctx.messages[0]!.role, 'user')
+    assert.deepStrictEqual(ctx.messages[0]!.content, parts)
+  })
 })
+
