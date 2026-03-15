@@ -75,4 +75,11 @@ describe('estimateContentTokens', () => {
     ]
     assert.equal(estimateContentTokens(parts, charCounter), 765)
   })
+
+  it('estimates file tokens as 1000 (conservative placeholder)', () => {
+    const parts: ContentPart[] = [
+      { type: 'file', file: { url: 'data:application/pdf;base64,...', mime_type: 'application/pdf', name: 'doc.pdf' } },
+    ]
+    assert.equal(estimateContentTokens(parts, charCounter), 1000)
+  })
 })

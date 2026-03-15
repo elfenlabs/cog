@@ -229,6 +229,7 @@ export function createOpenAIProvider(
   const temperature = opts?.temperature ?? 0.7
 
   return {
+    supportedMedia: ['image/*'],
     async generate(params) {
       const shouldStream = !!(
         params.stream?.onReasoning ||

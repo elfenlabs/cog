@@ -19,6 +19,7 @@ export type ContentPart =
   | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
   | { type: 'input_audio'; input_audio: { data: string; format: 'wav' | 'mp3' } }
   | { type: 'video_url'; video_url: { url: string; detail?: 'low' | 'high' | 'auto' } }
+  | { type: 'file'; file: { url: string; mime_type: string; name?: string } }
 
 /** A message in the context chain */
 export type Message = {
@@ -88,6 +89,8 @@ export interface Provider {
     signal?: AbortSignal
     stream?: StreamCallbacks
   }): Promise<GenerateResult>
+  /** MIME patterns this provider handles natively. Omission = text-only. */
+  supportedMedia?: string[]
 }
 
 // ── Content Helpers ─────────────────────────────────────────────────────────
@@ -125,6 +128,7 @@ export function estimateContentTokens(
     if (part.type === 'image_url') return sum + estimateImageTokens(part.image_url.detail)
     if (part.type === 'input_audio') return sum + Math.ceil(part.input_audio.data.length / 4)
     if (part.type === 'video_url') return sum + 765
+    if (part.type === 'file') return sum + 1000
     return sum
   }, 0)
 }
