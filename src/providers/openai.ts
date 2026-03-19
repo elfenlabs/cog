@@ -2,7 +2,7 @@
  * Nous — OpenAI-compatible Provider
  *
  * Works with OpenAI, vLLM, OpenRouter, and any OpenAI-compatible API.
- * Supports streaming (SSE) with reasoning_content extraction.
+ * Supports streaming (SSE) with reasoning extraction (both `reasoning_content` and `reasoning` fields).
  */
 
 import type { Provider, ToolCallRequest, ToolParameter, StreamCallbacks, Message, ToolSpec, Usage } from '../types.js'
@@ -154,9 +154,10 @@ async function readSSEStream(
       const delta = chunk.choices?.[0]?.delta
       if (!delta) continue
 
-      if (delta.reasoning_content) {
-        reasoning += delta.reasoning_content
-        stream?.onReasoning?.(delta.reasoning_content)
+      const rc = delta.reasoning_content ?? delta.reasoning
+      if (rc) {
+        reasoning += rc
+        stream?.onReasoning?.(rc)
       }
       if (delta.content) {
         content += delta.content
@@ -293,7 +294,7 @@ export function createOpenAIProvider(
           : undefined
         return {
           content: message.content ?? undefined,
-          reasoning: message.reasoning_content ?? undefined,
+          reasoning: message.reasoning_content ?? message.reasoning ?? undefined,
           toolCalls: parseToolCalls(message.tool_calls),
           usage,
         }
