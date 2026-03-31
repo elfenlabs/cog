@@ -15,6 +15,8 @@ export type ToolConfig<TArgs = Record<string, unknown>> = {
   schema?: Record<string, ToolParameter>
   execute: (args: TArgs, ctx: Context) => Promise<unknown>
   maxOutputChars?: number
+  /** When true, this tool's return value is the definitive agent output — the loop stops. */
+  terminal?: boolean
 }
 
 // ── Tool ────────────────────────────────────────────────────────────────────
@@ -25,6 +27,7 @@ export class Tool<TArgs = Record<string, unknown>> {
   readonly schema: Record<string, ToolParameter>
   readonly execute: (args: TArgs, ctx: Context) => Promise<unknown>
   readonly maxOutputChars?: number
+  readonly terminal: boolean
 
   constructor(config: ToolConfig<TArgs>) {
     this.id = config.id
@@ -32,6 +35,7 @@ export class Tool<TArgs = Record<string, unknown>> {
     this.schema = config.schema ?? {}
     this.execute = config.execute
     this.maxOutputChars = config.maxOutputChars
+    this.terminal = config.terminal ?? false
   }
 
   /** Tool specification for the provider (OpenAI-compatible format) */

@@ -55,6 +55,8 @@ export type AgentResult = {
   response: string
   steps: number
   usage: Usage
+  /** Raw structured payload when a terminal tool ended the loop */
+  terminalToolResult?: unknown
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -385,6 +387,21 @@ async function executeLoop(
               content: `Error: ${settled.reason}`,
               toolCallId: 'unknown',
             })
+          }
+        }
+
+        // Check for terminal tool — short-circuit the loop
+        const terminalResult = toolResults.find(
+          s => s.status === 'fulfilled' && s.value.tool?.terminal,
+        )
+        if (terminalResult && terminalResult.status === 'fulfilled') {
+          const tr = terminalResult.value
+          handle._transition('done', steps)
+          return {
+            response: tr.content,
+            steps,
+            usage: totalUsage,
+            terminalToolResult: tr.rawResult,
           }
         }
 

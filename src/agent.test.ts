@@ -863,3 +863,91 @@ describe('AgentRunHandle', () => {
   })
 })
 
+// ── Terminal Tool Tests ─────────────────────────────────────────────────────
+
+describe('terminal tools', () => {
+  it('terminal tool short-circuits the loop', async () => {
+    const verdict = { approved: true, reason: 'Looks good' }
+    const terminalTool = createTool({
+      id: 'submit_verdict',
+      description: 'Submit final verdict',
+      terminal: true,
+      execute: async () => verdict,
+    })
+
+    const provider = mockProvider([
+      { toolCalls: [{ id: 'c1', name: 'submit_verdict', arguments: {} }] },
+      // This second response should NEVER be reached
+      { content: 'Should not appear' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Review this')
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Review',
+      tools: [terminalTool],
+    })
+
+    // Loop ended on the terminal tool — provider called only once
+    assert.equal(provider.callCount, 1)
+    assert.equal(result.steps, 1)
+
+    // response is the stringified tool output
+    assert.equal(result.response, JSON.stringify(verdict))
+
+    // terminalToolResult holds the raw structured value
+    assert.deepEqual(result.terminalToolResult, verdict)
+
+    // Tool result still pushed to context (serialization fidelity)
+    const toolMsg = ctx.messages.find(m => m.role === 'tool')
+    assert.ok(toolMsg)
+    assert.equal(toolMsg!.toolCallId, 'c1')
+  })
+
+  it('terminal + non-terminal in parallel: both execute, terminal wins', async () => {
+    const normalTool = createTool({
+      id: 'fetch_data',
+      description: 'Fetch some data',
+      execute: async () => 'fetched',
+    })
+
+    const terminalTool = createTool({
+      id: 'submit_verdict',
+      description: 'Submit final verdict',
+      terminal: true,
+      execute: async () => ({ done: true }),
+    })
+
+    const provider = mockProvider([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'fetch_data', arguments: {} },
+          { id: 'c2', name: 'submit_verdict', arguments: {} },
+        ],
+      },
+      { content: 'Should not appear' },
+    ])
+
+    const ctx = createContext()
+    ctx.push('Go')
+
+    const result = await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [normalTool, terminalTool],
+    })
+
+    // Terminal tool ended the loop
+    assert.equal(provider.callCount, 1)
+    assert.deepEqual(result.terminalToolResult, { done: true })
+
+    // Both tool results are in context
+    const toolMsgs = ctx.messages.filter(m => m.role === 'tool')
+    assert.equal(toolMsgs.length, 2)
+  })
+})
+
