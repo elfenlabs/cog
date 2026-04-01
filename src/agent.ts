@@ -96,9 +96,9 @@ function truncate(content: string, limit: number): string {
 // ── Budget ──────────────────────────────────────────────────────────────────
 
 /** Estimate token cost of a single message (content + reasoning + tool call data) */
-function messageTokenCost(msg: Message, tokenCounter: TokenCounter): number {
+function messageTokenCost(msg: Message, tokenCounter: TokenCounter, includeReasoning: boolean): number {
   let tokens = estimateContentTokens(msg.content, tokenCounter)
-  if (msg.reasoning) tokens += tokenCounter(msg.reasoning)
+  if (includeReasoning && msg.reasoning) tokens += tokenCounter(msg.reasoning)
   if (msg.toolCalls) tokens += tokenCounter(JSON.stringify(msg.toolCalls))
   if (msg.toolCallId) tokens += tokenCounter(msg.toolCallId)
   return tokens
@@ -110,6 +110,7 @@ function calculateFixedCost(
   toolSpecs: ToolSpec[],
   ctx: Context,
   tokenCounter: TokenCounter,
+  includeReasoning: boolean,
 ): number {
   let cost = tokenCounter(instruction)
   if (toolSpecs.length > 0) {
@@ -117,7 +118,7 @@ function calculateFixedCost(
   }
   for (const msg of ctx.messages) {
     if (msg.pinned) {
-      cost += messageTokenCost(msg, tokenCounter)
+      cost += messageTokenCost(msg, tokenCounter, includeReasoning)
     }
   }
   return cost
@@ -267,7 +268,8 @@ async function executeLoop(
 
       // Compact context if strategy is configured
       if (evictionStrategy) {
-        const fixedCost = calculateFixedCost(instruction, toolSpecs, ctx, tokenCounter)
+        const includeReasoning = provider.includesReasoning ?? false
+        const fixedCost = calculateFixedCost(instruction, toolSpecs, ctx, tokenCounter, includeReasoning)
         const budget = maxContextTokens - fixedCost
         if (budget <= 0) {
           throw new ContextBudgetError(fixedCost, maxContextTokens)

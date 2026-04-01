@@ -91,6 +91,13 @@ export interface Provider {
   }): Promise<GenerateResult>
   /** MIME patterns this provider handles natively. Omission = text-only. */
   supportedMedia?: string[]
+  /**
+   * Whether this provider echoes reasoning tokens back in outbound messages.
+   * When true, reasoning is included in API requests and counted toward the context budget.
+   * When false or undefined (default), reasoning is stored in context but dropped from
+   * outbound payloads and excluded from budget calculations.
+   */
+  includesReasoning?: boolean
 }
 
 // ── Content Helpers ─────────────────────────────────────────────────────────

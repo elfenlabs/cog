@@ -14,14 +14,23 @@ export type OpenAIProviderOptions = {
   apiKey?: string
   /** Temperature for generation (default: 0.7) */
   temperature?: number
+  /**
+   * Include reasoning tokens in outbound API requests.
+   * When true, assistant messages include `reasoning_content` and
+   * the provider's `includesReasoning` is set to true for budget calculation.
+   * Required for providers that need reasoning echoed back (e.g., DeepSeek tool loops,
+   * Anthropic thinking, OpenAI o-series).
+   */
+  includeReasoning?: boolean
 }
 
 // ── Message Conversion ──────────────────────────────────────────────────────
 
 /** Convert internal Nous messages to OpenAI API wire format */
-function toAPIMessages(messages: Message[]) {
+function toAPIMessages(messages: Message[], includeReasoning: boolean) {
   return messages.map(m => {
     const msg: Record<string, unknown> = { role: m.role, content: m.content }
+    if (includeReasoning && m.reasoning) msg.reasoning_content = m.reasoning
     if (m.toolCallId) msg.tool_call_id = m.toolCallId
     if (m.toolCalls) {
       msg.tool_calls = m.toolCalls.map(tc => ({
@@ -228,9 +237,11 @@ export function createOpenAIProvider(
   opts?: OpenAIProviderOptions,
 ): Provider {
   const temperature = opts?.temperature ?? 0.7
+  const includeReasoning = opts?.includeReasoning ?? false
 
   return {
     supportedMedia: ['image/*'],
+    includesReasoning: includeReasoning,
     async generate(params) {
       const shouldStream = !!(
         params.stream?.onReasoning ||
@@ -240,7 +251,7 @@ export function createOpenAIProvider(
       )
 
       // Convert and sanitize messages
-      const apiMessages = toAPIMessages(params.messages)
+      const apiMessages = toAPIMessages(params.messages, includeReasoning)
       // Strip trailing empty assistant messages — these look like "prefill"
       // to servers with enable_thinking, causing a 400 error.
       while (apiMessages.length > 0) {

@@ -526,7 +526,76 @@ describe('runAgent', () => {
     // All 10 user messages + 1 assistant response = 11
     assert.equal(ctx.messages.length, 11)
   })
+
+  it('reasoning tokens NOT counted in budget by default (includesReasoning unset)', async () => {
+    const ctx = createContext()
+    // Push messages with reasoning — each has 50-char content + 200-char reasoning = 250 total
+    // But without includesReasoning, only content (50 chars) should be counted
+    for (let i = 0; i < 5; i++) {
+      ctx.push({
+        role: 'assistant',
+        content: 'C'.repeat(50),
+        reasoning: 'R'.repeat(200),
+      })
+      ctx.push('U'.repeat(50))
+    }
+
+    const provider = mockProvider([{ content: 'Done.' }])
+    // Default: provider has no includesReasoning set (undefined → false)
+    const { SlidingWindowStrategy } = await import('./strategy.js')
+
+    await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [],
+      maxContextTokens: 350, // 350 token budget - 2 for instruction = 348 for messages
+      evictionStrategy: new SlidingWindowStrategy(),
+      tokenCounter: (text: string) => text.length, // 1 char = 1 token
+    })
+
+    // With reasoning excluded: each pair costs 100 tokens (50+50).
+    // With reasoning included: each pair costs 300 tokens (250+50).
+    // The key assertion: reasoning-bearing messages are NOT aggressively evicted.
+    // We should have more messages than if reasoning were counted.
+    // The "+ 1" accounts for the final assistant 'Done.' response.
+    assert.ok(ctx.messages.length >= 3, `Expected >= 3 messages, got ${ctx.messages.length}`)
+  })
+
+  it('reasoning tokens counted in budget when provider.includesReasoning is true', async () => {
+    const ctx = createContext()
+    // Same setup: 50-char content + 200-char reasoning
+    for (let i = 0; i < 5; i++) {
+      ctx.push({
+        role: 'assistant',
+        content: 'C'.repeat(50),
+        reasoning: 'R'.repeat(200),
+      })
+      ctx.push('U'.repeat(50))
+    }
+
+    const provider = mockProvider([{ content: 'Done.' }])
+    // Set includesReasoning to true
+    ;(provider as any).includesReasoning = true
+    const { SlidingWindowStrategy } = await import('./strategy.js')
+
+    await runAgent({
+      ctx,
+      provider,
+      instruction: 'Go',
+      tools: [],
+      maxContextTokens: 350,
+      evictionStrategy: new SlidingWindowStrategy(),
+      tokenCounter: (text: string) => text.length,
+    })
+
+    // With reasoning included: assistant msgs cost 250, user msgs cost 50
+    // Budget = 348 tokens after instruction. Pairs cost 300 each.
+    // Should aggressively evict — far fewer messages survive
+    assert.ok(ctx.messages.length <= 4, `Expected <= 4 messages, got ${ctx.messages.length}`)
+  })
 })
+
 
 // ── AgentRunHandle Tests ────────────────────────────────────────────────────
 
